@@ -1,0 +1,97 @@
+2D heavy-ion collision initial condition guide
+==============================================
+
+File
+----
+C:\Users\Administrator\Documents\Codex\2026-06-02\HIC\hic\nuclear_collision_2d.py
+
+What this makes
+---------------
+This is the first heavy-ion collision prototype in this HIC folder. It is a
+GPU toy model for visualizing how two incoming nuclei create an initial
+transverse energy density and how that density evolves afterward.
+
+The output HTML has three panels:
+
+1. energy density evolution
+   The produced matter after the two nuclei overlap.
+
+2. incoming nuclear thickness
+   The two moving nuclear thickness profiles before and during overlap.
+
+3. eps2 / rms radius
+   A simple eccentricity and size diagnostic over time.
+
+Model
+-----
+The initial source uses a Glauber-like mixture:
+
+T_A, T_B = moving Woods-Saxon-like transverse thickness profiles
+wounded  = T_A * (1 - exp(-T_B)) + T_B * (1 - exp(-T_A))
+binary   = T_A * T_B
+e_source = norm * ((1 - alpha) * wounded + alpha * binary)
+
+The evolution is a qualitative hydrodynamic-like toy model:
+
+de/dt = diffusion * laplacian(e) - radial_expansion * div(e * r_hat) - damping * e
+
+This is not a validated relativistic viscous hydrodynamics code yet. It is the
+first step toward studying initial-condition evolution.
+
+Useful parameters
+-----------------
+--grid-size
+2D transverse grid resolution.
+
+--impact-parameter
+Offset between the two nuclei. Larger values make the initial energy density
+more almond-shaped and increase eccentricity.
+
+--mass-number
+Approximate nuclear mass number.
+
+--radius
+Nuclear radius.
+
+--skin-depth
+Woods-Saxon surface diffuseness.
+
+--binary-fraction
+Mixing fraction between wounded-nucleon-like and binary-collision-like scaling.
+
+--diffusion
+Smoothing strength during evolution.
+
+--radial-expansion
+How strongly the produced energy density expands outward.
+
+--damping
+Decay rate of the energy density.
+
+Example
+-------
+From the HIC directory:
+
+..\gpu\.venv\Scripts\python.exe -m hic.nuclear_collision_2d
+
+More peripheral collision:
+
+..\gpu\.venv\Scripts\python.exe -m hic.nuclear_collision_2d --impact-parameter 10 --output outputs\nuclear_collision_b10.html
+
+More central collision:
+
+..\gpu\.venv\Scripts\python.exe -m hic.nuclear_collision_2d --impact-parameter 1.5 --output outputs\nuclear_collision_b15.html
+
+Output
+------
+By default:
+
+outputs\nuclear_collision_2d.html
+
+Next steps
+----------
+1. add event-by-event fluctuating nucleon positions
+2. implement a proper Monte Carlo Glauber initial condition
+3. evolve flow velocity fields, not only scalar energy density
+4. add elliptic-flow-like observables
+5. move toward relativistic hydrodynamics-inspired equations
