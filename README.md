@@ -1,7 +1,9 @@
-# HIC Simulation
+# HIC-simulation
 
-GPU-accelerated toy simulations for exploring heavy-ion collision initial
-conditions and early-time evolution.
+Simulate the evolution of relativistic heavy-ion collisions.
+
+This repository starts with GPU-accelerated toy simulations for exploring
+heavy-ion collision initial conditions and early-time evolution.
 
 ## Current prototype
 
@@ -33,4 +35,3 @@ For a quick smoke test:
 ```powershell
 & ..\gpu\.venv\Scripts\python.exe -m hic.nuclear_collision_2d --grid-size 80 --steps 80 --frame-every 8 --output outputs\nuclear_collision_2d_smoke.html
 ```
-
