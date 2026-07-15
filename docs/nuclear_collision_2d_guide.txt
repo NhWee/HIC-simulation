@@ -3,13 +3,16 @@
 
 File
 ----
-C:\Users\Administrator\Documents\Codex\2026-06-02\HIC\hic\nuclear_collision_2d.py
+hic\nuclear_collision_2d.py
 
 What this makes
 ---------------
 This is the first heavy-ion collision prototype in this HIC folder. It is a
 GPU toy model for visualizing how two incoming nuclei create an initial
-transverse energy density and how that density evolves afterward.
+transverse energy density and how that density evolves afterward. It can use
+either smooth Woods-Saxon-like nuclear thickness profiles or a fluctuating
+Monte Carlo Glauber event made from sampled nucleon positions, participant
+tagging, and binary collision centers.
 
 The output HTML has three panels:
 
@@ -22,6 +25,9 @@ The output HTML has three panels:
 3. eps2 / rms radius
    A simple eccentricity and size diagnostic over time.
 
+For Monte Carlo Glauber events, the console and HTML title also report N_part
+and N_coll for the sampled event.
+
 Model
 -----
 The initial source uses a Glauber-like mixture:
@@ -30,6 +36,12 @@ T_A, T_B = moving Woods-Saxon-like transverse thickness profiles
 wounded  = T_A * (1 - exp(-T_B)) + T_B * (1 - exp(-T_A))
 binary   = T_A * T_B
 e_source = norm * ((1 - alpha) * wounded + alpha * binary)
+
+With --initial-condition mc-glauber, each nucleus is sampled event-by-event
+from a Woods-Saxon density. Nucleons become participants when an A-B pair is
+closer than sqrt(sigma_NN / pi) in the transverse plane. The wounded source is
+deposited from participant nucleons, and the binary source is deposited from
+the centers of tagged A-B collision pairs.
 
 The evolution is a qualitative hydrodynamic-like toy model:
 
@@ -59,6 +71,20 @@ Woods-Saxon surface diffuseness.
 --binary-fraction
 Mixing fraction between wounded-nucleon-like and binary-collision-like scaling.
 
+--initial-condition
+Choose smooth for continuous Woods-Saxon-like profiles or mc-glauber for a
+fluctuating sampled nucleon event.
+
+--nucleon-width
+Gaussian nucleon width used by mc-glauber mode.
+
+--inelastic-cross-section
+Nucleon-nucleon inelastic cross section in fm^2. The default 4.2 is roughly
+42 mb, a reasonable high-energy heavy-ion scale for this toy model.
+
+--seed
+Random seed used by mc-glauber mode.
+
 --diffusion
 Smoothing strength during evolution.
 
@@ -70,17 +96,149 @@ Decay rate of the energy density.
 
 Example
 -------
-From the HIC directory:
+From the HIC directory, set up the project environment once:
 
-..\gpu\.venv\Scripts\python.exe -m hic.nuclear_collision_2d
+.\setup.ps1
+
+Then run the viewer:
+
+.\run_nuclear_collision_2d.ps1
 
 More peripheral collision:
 
-..\gpu\.venv\Scripts\python.exe -m hic.nuclear_collision_2d --impact-parameter 10 --output outputs\nuclear_collision_b10.html
+.\run_nuclear_collision_2d.ps1 --impact-parameter 10 --output outputs\nuclear_collision_b10.html
 
 More central collision:
 
-..\gpu\.venv\Scripts\python.exe -m hic.nuclear_collision_2d --impact-parameter 1.5 --output outputs\nuclear_collision_b15.html
+.\run_nuclear_collision_2d.ps1 --impact-parameter 1.5 --output outputs\nuclear_collision_b15.html
+
+Fluctuating Monte Carlo Glauber event:
+
+.\run_nuclear_collision_2d.ps1 --initial-condition mc-glauber --seed 11 --output outputs\nuclear_collision_2d_mc.html
+
+Monte Carlo Glauber ensemble:
+
+.\run_glauber_ensemble.ps1 --events 200 --output outputs\glauber_ensemble.csv
+
+The ensemble output contains event, impact_parameter, centrality_percentile,
+N_part, N_coll, total_source, eps2, eps3, and rms_radius. Centrality is assigned
+by sorting events from largest to smallest total_source.
+
+Centrality analysis:
+
+.\run_centrality_analysis.ps1 --input outputs\glauber_ensemble.csv --output outputs\centrality_analysis.csv
+
+This groups the Glauber ensemble into centrality bins and reports mean and
+standard error for impact_parameter, N_part, N_coll, total_source, eps2, eps3,
+and rms_radius.
+
+Conservative ideal-hydrodynamics prototype:
+
+.\run_ideal_hydro_2d.ps1 --bjorken-expansion --steps 120 --output outputs\ideal_hydro_2d.csv
+
+This evolves T00, T0x, and T0y with a Rusanov finite-volume update and the
+analytic equation of state p = c_s^2 e. It is still an early prototype, but it
+uses energy-momentum conservation rather than scalar diffusion. With
+--bjorken-expansion, it also applies boost-invariant longitudinal cooling,
+e(tau) proportional to tau^-(1+c_s^2), as an operator-split source term.
+
+--shear-viscosity
+Optional prototype momentum-diffusion coefficient. This damps transverse
+momentum gradients, but it is not full Israel-Stewart viscous hydrodynamics.
+
+Freeze-out candidates:
+
+.\run_ideal_hydro_2d.ps1 --bjorken-expansion --steps 120 --freezeout-energy 0.35 --freezeout-output outputs\freezeout_surface.csv
+
+This writes cells at the first time step where the local energy density crosses
+below the freeze-out threshold. The crossing tau is linearly interpolated
+between the previous and current hydro step, and the output contains tau, x, y,
+energy_density, pressure, velocity_x, velocity_y, and a first time-like surface
+element estimate d_sigma_tau. This is not a full Cooper-Frye surface yet, but it
+is the first bridge from hydrodynamics to particlization.
+
+Particlization prototype:
+
+.\run_particlization.ps1 --freezeout-surface outputs\freezeout_surface.csv --particles 10000 --output outputs\particles.csv --summary-output outputs\particle_observables.csv
+
+This samples pion-like particles from freeze-out candidate cells using a simple
+Boltzmann transverse-momentum distribution and an approximate transverse-flow
+kick. It now records p dot u, p dot dSigma, and a Cooper-Frye-like positive
+weight for each sampled particle. It writes sampled particle momenta and a
+summary with mean pT, v2, v3, and mean Cooper-Frye-like weight. This is not a
+full Cooper-Frye sampler yet. If the freeze-out surface has a temperature
+column, the sampler uses that local temperature instead of one global
+temperature.
+
+Small event batch:
+
+.\run_event_pipeline.ps1 --events 3 --particles 2000 --summary-output outputs\pipeline_summary.csv
+
+This runs hydro, freeze-out extraction, particlization, and per-event observable
+aggregation for a small seed scan.
+
+Pipeline analysis:
+
+.\run_analyze_pipeline.ps1 --input outputs\pipeline_summary.csv --output outputs\pipeline_analysis.csv
+
+This computes event-averaged mean pT, standard errors, and RMS flow-like
+quantities v2_rms and v3_rms from the event summary.
+
+Interactive result report:
+
+.\run_visualize_results.ps1 --hydro outputs\ideal_hydro_2d.csv --freezeout outputs\freezeout_surface.csv --particles outputs\particles.csv --pipeline-summary outputs\pipeline_summary.csv --output outputs\simulation_report.html
+
+This creates a Plotly HTML report with hydro diagnostics, freeze-out surface
+points, particle pT/phi distributions, and event-level observables when the
+corresponding CSV files are available.
+
+Equation of state options:
+
+--eos conformal
+Default analytic equation of state, p = c_s^2 e. This is the only mode with
+the simple analytic Bjorken cooling validation.
+
+--eos crossover
+Toy crossover-like equation of state with low-density and high-density sound
+speeds connected by a smooth transition. It is not a lattice-QCD table yet, but
+it makes the EoS replaceable and gives a controlled soft-region prototype.
+
+--eos table
+Reads a CSV equation-of-state table with energy_density, pressure, and
+sound_speed2 columns, then linearly interpolates pressure and sound speed during
+the hydro update. The included data\eos_table.csv is a compact demonstration
+table, not a production lattice-QCD EoS. If the table includes temperature,
+freeze-out surfaces record the interpolated local temperature for
+particlization.
+
+Example:
+
+.\run_ideal_hydro_2d.ps1 --eos crossover --steps 120 --output outputs\ideal_hydro_crossover.csv
+
+.\run_ideal_hydro_2d.ps1 --eos table --eos-table data\eos_table.csv --steps 120 --output outputs\ideal_hydro_table.csv
+
+Hydrodynamics validation:
+
+.\run_hydro_validation.ps1 --output outputs\hydro_validation.csv
+
+The validation script checks exact preservation of uniform rest and uniformly
+boosted states, total-energy drift in a smooth Gaussian fireball, and the
+analytic uniform Bjorken cooling law.
+
+Hydrodynamics convergence/stability scan:
+
+.\run_hydro_convergence.ps1 --grid-sizes 40,60,80 --cfl-values 0.15,0.25,0.35 --output outputs\hydro_convergence.csv
+
+This repeats the validation suite over multiple grid resolutions and CFL values
+and records the resulting errors and PASS/FAIL status.
+
+Relativistic shock-tube benchmark:
+
+.\run_hydro_shock_tube.ps1 --output outputs\hydro_shock_tube.csv
+
+This initializes a high-energy-density left state and low-energy-density right
+state, evolves them with the same finite-volume solver, and writes the center
+row profile plus conservation diagnostics.
 
 Output
 ------
@@ -90,8 +248,7 @@ outputs\nuclear_collision_2d.html
 
 Next steps
 ----------
-1. add event-by-event fluctuating nucleon positions
-2. implement a proper Monte Carlo Glauber initial condition
-3. evolve flow velocity fields, not only scalar energy density
-4. add elliptic-flow-like observables
-5. move toward relativistic hydrodynamics-inspired equations
+1. add Gubser/Bjorken-inspired validation problems
+2. add an equation of state table or a controlled analytic EoS switch
+3. turn freeze-out candidate cells into surface elements with normals
+4. replace approximate particlization with Cooper-Frye sampling

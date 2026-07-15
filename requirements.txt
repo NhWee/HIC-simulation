@@ -1,0 +1,4 @@
+numpy==2.4.4
+plotly==6.8.0
+PySide6==6.10.1
+pyqtgraph==0.14.0
