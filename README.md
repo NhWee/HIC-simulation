@@ -12,6 +12,35 @@ The repository contains three levels of tooling:
 The Blender result is generated from calculated fields and sampled particles;
 the plasma expansion and particle trajectories are not hand animated.
 
+## Representative result
+
+![Landau-matched QGP hydrodynamization for the reference Au+Au event](docs/assets/qgp-hydrodynamization.webp)
+
+The reference event is Au+Au at `sqrt(sNN)=200 GeV`, `b=5.7 fm`, seed 17.
+The bright interior is the hydrodynamic temperature field, the highlighted
+core is `T>=165 MeV`, and the outer contour marks `Tsw=145 MeV`.
+
+| Collisionless pre-equilibrium | Sampled hadrons after particlization |
+| --- | --- |
+| ![Landau-frame effective-temperature field during pre-equilibrium](docs/assets/qgp-formation.webp) | ![Pion, kaon, and proton classes after Cooper-Frye sampling](docs/assets/sampled-hadrons.webp) |
+
+Indicative values from the tested CUDA reference run:
+
+| Observable | Result |
+| --- | ---: |
+| Glauber geometry | `Npart=236`, `Ncoll=574` |
+| Pre-equilibrium interval | `0.1 -> 0.6 fm/c` |
+| Maximum Landau effective temperature | `612 -> 370 MeV` |
+| Energy-weighted handoff pre-flow | `0.149 c` |
+| QGP-core cells at hydrodynamization | `3524` |
+| Sampled hadrons | `900` |
+| Mean transverse momentum | `0.449 GeV` |
+| Reaction-plane `v2` | `0.0119` |
+
+These values are regression references rather than experimental predictions.
+The complete run writes a 13-second, 1280 x 720, 24 fps Blender animation and
+a machine-readable physics audit.
+
 ## Physics scope
 
 The reference Blender event uses:
