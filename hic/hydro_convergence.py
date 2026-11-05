@@ -25,6 +25,7 @@ def validation_namespace(args: argparse.Namespace, grid_size: int, cfl: float) -
         uniform_tolerance=args.uniform_tolerance,
         gaussian_energy_tolerance=args.gaussian_energy_tolerance,
         bjorken_tolerance=args.bjorken_tolerance,
+        crossover_bjorken_tolerance=args.crossover_bjorken_tolerance,
         cpu=args.cpu,
         output=Path("NUL"),
     )
@@ -79,6 +80,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--uniform-tolerance", type=float, default=1.0e-6, help="Uniform test tolerance.")
     parser.add_argument("--gaussian-energy-tolerance", type=float, default=2.0e-3, help="Gaussian energy drift tolerance.")
     parser.add_argument("--bjorken-tolerance", type=float, default=1.0e-5, help="Bjorken analytic tolerance.")
+    parser.add_argument(
+        "--crossover-bjorken-tolerance",
+        type=float,
+        default=5.0e-3,
+        help="Coarse/fine relative tolerance for crossover Bjorken cooling.",
+    )
     parser.add_argument("--cpu", action="store_true", help="Force CPU execution.")
     parser.add_argument("--output", type=Path, default=Path("outputs/hydro_convergence.csv"), help="Output CSV path.")
     parsed = parser.parse_args()
