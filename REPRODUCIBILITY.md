@@ -105,8 +105,9 @@ The reference video is 1280 x 720, 24 fps, 312 frames, and 13 seconds long.
 For seed 17 and `b=5.7 fm`, the reference run produced the values below. The
 same values, with per-observable tolerances, are stored in
 `tests/reference/blender_event_audit.json` and checked by `python -m pytest`
-(CPU). The values reflect the exact Milne source terms (ROADMAP P0-3) and the
-HotQCD lattice equation of state (P0-1). The sampled v2 has a single-sample
+(CPU). The values reflect the exact Milne source terms (ROADMAP P0-3), the
+HotQCD lattice equation of state (P0-1) and the isotherm-crossing freeze-out
+surface (P0-4). The sampled v2 has a single-sample
 Monte Carlo spread of about 0.004.
 
 ```text
@@ -119,10 +120,13 @@ energy-weighted handoff pre-flow            0.14869 c
 Landau eigen-equation residual              3.54e-7
 handoff temperature L-infinity error        2.68e-6 GeV
 QGP-core cells at hydrodynamization         3594
-freeze-out cells                            4481
+freeze-out surface elements                 4667 (93 heating)
 sampled particles                           900
-mean pT                                     0.4739 GeV
-v2 relative to the reaction plane           0.0076
+mean pT                                     0.4795 GeV
+v2 relative to the reaction plane           0.0141
+entropy above Tsw at tau0 (per unit eta)    704.7
+entropy flux / initial entropy              0.976
+direct charged dN/deta (pi, K, p)           36.5
 ```
 
 The integer Glauber geometry should be stable for the fixed NumPy seed. Small

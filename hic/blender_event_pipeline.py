@@ -30,6 +30,9 @@ from hic.nuclear_collision_2d import make_grid, tag_glauber_collisions
 SPECIES_NAMES = np.asarray(("pion", "kaon", "proton"))
 SPECIES_MASSES = np.asarray((0.13957, 0.49368, 0.93827), dtype=np.float64)
 SPECIES_DEGENERACIES = np.asarray((3.0, 4.0, 4.0), dtype=np.float64)
+# Charged fraction of each isospin multiplet: (pi+, pi-, pi0), (K+, K-, K0, K0bar), (p, pbar, n, nbar).
+SPECIES_CHARGED_FRACTION = np.asarray((2.0 / 3.0, 0.5, 0.5), dtype=np.float64)
+HBARC_GEV_FM = 0.1973269804
 
 
 @dataclass
@@ -78,6 +81,7 @@ class HydroResult:
     freezeout_velocity_x: np.ndarray
     freezeout_velocity_y: np.ndarray
     freezeout_energy: np.ndarray
+    surface_elements: dict[str, np.ndarray]
 
 
 @dataclass
@@ -90,6 +94,7 @@ class SurfaceResult:
     d_sigma_tau: np.ndarray
     d_sigma_x: np.ndarray
     d_sigma_y: np.ndarray
+    heating: np.ndarray
 
 
 @dataclass
@@ -108,6 +113,9 @@ class ParticleResult:
     mean_pt: float
     v2: float
     v3: float
+    dn_deta: np.ndarray  # Cooper-Frye mean dN/d(eta_s) per species (direct thermal hadrons)
+    dnch_deta: float
+    expected_in_window: float
 
 
 def sample_woods_saxon_3d(
@@ -221,7 +229,13 @@ def physical_temperature(eos: EquationOfState, energy_density: torch.Tensor) -> 
         0.25,
     )
     temperature = torch.where(energy_density > maximum_table_energy, high_energy_temperature, temperature)
-    return torch.where(energy_density >= minimum_table_energy, temperature, torch.zeros_like(temperature))
+    # Below the table, continue T ~ e^(1/4) to zero instead of jumping from T_min to 0, so that
+    # dilute cells straddling the table edge do not produce a spurious 70 MeV discontinuity.
+    minimum_table_temperature = float(eos.table_temperature[0])
+    low_energy_temperature = minimum_table_temperature * torch.pow(
+        torch.clamp(energy_density / minimum_table_energy, min=0.0, max=1.0), 0.25
+    )
+    return torch.where(energy_density >= minimum_table_energy, temperature, low_energy_temperature)
 
 
 def landau_match_transverse_tensor(
@@ -433,6 +447,58 @@ def evolve_pre_equilibrium(
     )
 
 
+def isotherm_crossings(
+    previous_temperature: torch.Tensor,
+    temperature: torch.Tensor,
+    threshold: float,
+    previous_tau: float,
+    dt: float,
+    dx: float,
+    previous_velocity: tuple[torch.Tensor, torch.Tensor],
+    velocity: tuple[torch.Tensor, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    """Surface elements where the isotherm T = threshold crosses a cell during one time step.
+
+    Both cooling (T falls through the threshold) and heating crossings are kept. Each element is
+    the piece of the hypersurface F = T - threshold = 0 above one cell, so its projection on the
+    transverse plane is dx^2 and its covariant normal, oriented toward the cold side, is
+
+        dsigma_mu = -tau dx^2 (d_mu T) / |d_tau T|,   mu = (tau, x, y), per unit space-time rapidity.
+
+    For a single cooling crossing this equals the familiar tau dx^2 (1, -d_x tau_f, -d_y tau_f).
+    Heating crossings come from the expanding edge of the fireball; their Cooper-Frye flux is
+    positive only for hadrons that outrun the moving isotherm.
+    """
+    previous_hot = previous_temperature >= threshold
+    hot = temperature >= threshold
+    crossed = previous_hot != hot
+    if not bool(torch.any(crossed)):
+        return {}
+    difference = temperature - previous_temperature
+    fraction = torch.clamp((threshold - previous_temperature) / torch.where(crossed, difference, 1.0), 0.0, 1.0)
+    d_tau_temperature = difference / dt
+    grad_previous_y, grad_previous_x = torch.gradient(previous_temperature, spacing=dx)
+    grad_y, grad_x = torch.gradient(temperature, spacing=dx)
+    grad_x = grad_previous_x + fraction * (grad_x - grad_previous_x)
+    grad_y = grad_previous_y + fraction * (grad_y - grad_previous_y)
+    tau = previous_tau + fraction * dt
+    scale = -tau * dx * dx / torch.abs(d_tau_temperature).clamp(min=1.0e-30)
+    velocity_x = previous_velocity[0] + fraction * (velocity[0] - previous_velocity[0])
+    velocity_y = previous_velocity[1] + fraction * (velocity[1] - previous_velocity[1])
+    rows, columns = torch.nonzero(crossed, as_tuple=True)
+    return {
+        "row": rows,
+        "column": columns,
+        "tau": tau[crossed],
+        "velocity_x": velocity_x[crossed],
+        "velocity_y": velocity_y[crossed],
+        "d_sigma_tau": (scale * d_tau_temperature)[crossed],
+        "d_sigma_x": (scale * grad_x)[crossed],
+        "d_sigma_y": (scale * grad_y)[crossed],
+        "heating": (~previous_hot)[crossed],
+    }
+
+
 def evolve_hydrodynamics(
     args: argparse.Namespace,
     preequilibrium: PreEquilibriumResult,
@@ -460,7 +526,7 @@ def evolve_hydrodynamics(
         state[0], state[1], state[2], eos, args.energy_floor
     )
     previous_temperature = physical_temperature(eos, previous_energy)
-    initially_hot = previous_temperature >= args.freezeout_temperature
+    element_chunks: list[dict[str, torch.Tensor]] = []
 
     tau_frames: list[float] = []
     energy_frames: list[np.ndarray] = []
@@ -509,8 +575,20 @@ def evolve_hydrodynamics(
         )
         temperature = physical_temperature(eos, energy_density)
 
-        not_recorded = torch.isnan(freezeout_tau)
-        crossed = initially_hot & not_recorded & (previous_temperature >= args.freezeout_temperature) & (
+        chunk = isotherm_crossings(
+            previous_temperature,
+            temperature,
+            args.freezeout_temperature,
+            previous_tau,
+            dt,
+            dx,
+            (previous_vx, previous_vy),
+            (velocity_x, velocity_y),
+        )
+        if chunk:
+            element_chunks.append(chunk)
+        # Per-cell maps keep the last cooling crossing (cache/visualization diagnostics).
+        crossed = (previous_temperature >= args.freezeout_temperature) & (
             temperature < args.freezeout_temperature
         )
         denominator = torch.clamp(previous_temperature - temperature, min=1.0e-12)
@@ -551,6 +629,15 @@ def evolve_hydrodynamics(
         f"Hydro: steps={steps}, snapshots={len(tau_frames)}, "
         f"tau={tau_frames[0]:.3f}->{tau_frames[-1]:.3f} fm/c"
     )
+    element_keys = ("row", "column", "tau", "velocity_x", "velocity_y", "d_sigma_tau", "d_sigma_x", "d_sigma_y", "heating")
+    surface_elements = {
+        key: (
+            torch.cat([chunk[key] for chunk in element_chunks]).detach().cpu().numpy()
+            if element_chunks
+            else np.zeros(0)
+        )
+        for key in element_keys
+    }
     return HydroResult(
         tau=np.asarray(tau_frames, dtype=np.float32),
         energy_density=np.asarray(energy_frames, dtype=np.float32),
@@ -565,54 +652,27 @@ def evolve_hydrodynamics(
         freezeout_velocity_x=freezeout_velocity_x.detach().cpu().numpy().astype(np.float32),
         freezeout_velocity_y=freezeout_velocity_y.detach().cpu().numpy().astype(np.float32),
         freezeout_energy=freezeout_energy.detach().cpu().numpy().astype(np.float32),
+        surface_elements=surface_elements,
     )
 
 
-def masked_surface_gradient(values: np.ndarray, valid: np.ndarray, dx: float, axis: int) -> np.ndarray:
-    gradient = np.zeros_like(values, dtype=np.float64)
-    if axis == 1:
-        center = valid[:, 1:-1]
-        both = center & valid[:, :-2] & valid[:, 2:]
-        right = center & ~valid[:, :-2] & valid[:, 2:]
-        left = center & valid[:, :-2] & ~valid[:, 2:]
-        middle = gradient[:, 1:-1]
-        middle[both] = ((values[:, 2:] - values[:, :-2]) / (2.0 * dx))[both]
-        middle[right] = ((values[:, 2:] - values[:, 1:-1]) / dx)[right]
-        middle[left] = ((values[:, 1:-1] - values[:, :-2]) / dx)[left]
-    else:
-        center = valid[1:-1, :]
-        both = center & valid[:-2, :] & valid[2:, :]
-        top = center & ~valid[:-2, :] & valid[2:, :]
-        bottom = center & valid[:-2, :] & ~valid[2:, :]
-        middle = gradient[1:-1, :]
-        middle[both] = ((values[2:, :] - values[:-2, :]) / (2.0 * dx))[both]
-        middle[top] = ((values[2:, :] - values[1:-1, :]) / dx)[top]
-        middle[bottom] = ((values[1:-1, :] - values[:-2, :]) / dx)[bottom]
-    return gradient
-
-
 def build_freezeout_surface(hydro: HydroResult, axis: np.ndarray, dx: float) -> SurfaceResult:
-    valid = np.isfinite(hydro.freezeout_tau)
-    if int(valid.sum()) == 0:
+    """Collect the isotherm-crossing elements recorded during the hydro evolution."""
+    elements = hydro.surface_elements
+    if elements["tau"].size == 0:
         raise RuntimeError("No cells crossed the requested freeze-out temperature.")
-    safe_tau = np.where(valid, hydro.freezeout_tau, 0.0).astype(np.float64)
-    grad_x = masked_surface_gradient(safe_tau, valid, dx, axis=1)
-    grad_y = masked_surface_gradient(safe_tau, valid, dx, axis=0)
-    yy, xx = np.meshgrid(axis, axis, indexing="ij")
-    tau = safe_tau[valid]
-    area = dx * dx
-    d_sigma_tau = tau * area
-    d_sigma_x = -tau * grad_x[valid] * area
-    d_sigma_y = -tau * grad_y[valid] * area
+    rows = elements["row"].astype(np.int64)
+    columns = elements["column"].astype(np.int64)
     return SurfaceResult(
-        tau=tau.astype(np.float32),
-        x=xx[valid].astype(np.float32),
-        y=yy[valid].astype(np.float32),
-        velocity_x=hydro.freezeout_velocity_x[valid].astype(np.float32),
-        velocity_y=hydro.freezeout_velocity_y[valid].astype(np.float32),
-        d_sigma_tau=d_sigma_tau.astype(np.float32),
-        d_sigma_x=d_sigma_x.astype(np.float32),
-        d_sigma_y=d_sigma_y.astype(np.float32),
+        tau=elements["tau"].astype(np.float32),
+        x=axis[columns].astype(np.float32),
+        y=axis[rows].astype(np.float32),
+        velocity_x=elements["velocity_x"].astype(np.float32),
+        velocity_y=elements["velocity_y"].astype(np.float32),
+        d_sigma_tau=elements["d_sigma_tau"].astype(np.float32),
+        d_sigma_x=elements["d_sigma_x"].astype(np.float32),
+        d_sigma_y=elements["d_sigma_y"].astype(np.float32),
+        heating=elements["heating"].astype(bool),
     )
 
 
@@ -620,6 +680,15 @@ def bessel_k2(z: float) -> float:
     integration_axis = np.linspace(0.0, 12.0, 6000)
     integrand = np.exp(-z * np.cosh(integration_axis)) * np.cosh(2.0 * integration_axis)
     return float(np.trapezoid(integrand, integration_axis))
+
+
+def thermal_number_densities(temperature: float) -> np.ndarray:
+    """Boltzmann number density n_i = g m^2 T K_2(m/T) / (2 pi^2) per species, in 1/fm^3."""
+    values = [
+        degeneracy * mass * mass * temperature * bessel_k2(mass / temperature) / (2.0 * math.pi**2)
+        for mass, degeneracy in zip(SPECIES_MASSES, SPECIES_DEGENERACIES)
+    ]
+    return np.asarray(values, dtype=np.float64) / HBARC_GEV_FM**3
 
 
 def thermal_species_probabilities(temperature: float) -> np.ndarray:
@@ -680,7 +749,7 @@ def sample_cooper_frye_particles(
     species_probability = thermal_species_probabilities(args.freezeout_temperature)
     # The displayed particle set stays compact, while a larger importance-
     # sampled pool stabilizes integrated pT and vn estimates.
-    candidate_count = max(args.particles * 32, 12000)
+    candidate_count = max(args.particles * 32, 40000 if args.particles <= 0 else 12000)
 
     cell = rng.choice(surface.tau.size, size=candidate_count, replace=True, p=surface_probability)
     species = rng.choice(SPECIES_NAMES.size, size=candidate_count, replace=True, p=species_probability)
@@ -722,7 +791,24 @@ def sample_cooper_frye_particles(
     if float(importance.sum()) <= 0.0:
         raise RuntimeError("The Cooper-Frye surface produced no positive contributions.")
     selection_probability = importance / importance.sum()
-    selected = rng.choice(candidate_count, size=args.particles, replace=False, p=selection_probability)
+
+    # Mean multiplicity per unit space-time rapidity. Candidates are drawn with probability
+    # (envelope_c / sum envelope) (n_i / n_total) f_i(p*), so for each species
+    #   dN_i/deta = n_total * sum(envelope) * E[importance; species i],
+    # the Monte Carlo estimate of integral d^3p/E f_i(p.u) max(p.dsigma, 0).
+    densities = thermal_number_densities(args.freezeout_temperature)
+    pool_scale = densities.sum() * float(envelope.sum()) / candidate_count
+    dn_deta = np.asarray(
+        [pool_scale * float(importance[species == index].sum()) for index in range(SPECIES_NAMES.size)]
+    )
+    dnch_deta = float(np.sum(dn_deta * SPECIES_CHARGED_FRACTION))
+    expected_in_window = float(dn_deta.sum() * 2.0 * args.eta_window)
+    if args.particles > 0:
+        particle_count = args.particles
+    else:
+        particle_count = max(1, int(rng.poisson(expected_in_window)))
+    particle_count = min(particle_count, int(np.count_nonzero(importance > 0.0)))
+    selected = rng.choice(candidate_count, size=particle_count, replace=False, p=selection_probability)
 
     selected_px = momentum_x[selected]
     selected_py = momentum_y[selected]
@@ -745,7 +831,41 @@ def sample_cooper_frye_particles(
         # The impact parameter is along +y in this event geometry.
         v2=float(np.sum(observable_weight * np.cos(2.0 * (candidate_phi - 0.5 * math.pi)))),
         v3=float(np.sum(observable_weight * np.cos(3.0 * candidate_phi))),
+        dn_deta=dn_deta,
+        dnch_deta=dnch_deta,
+        expected_in_window=expected_in_window,
     )
+
+
+def entropy_closure(
+    args: argparse.Namespace,
+    eos: EquationOfState,
+    hydro: HydroResult,
+    surface: SurfaceResult,
+    dx: float,
+) -> tuple[float, float]:
+    """Entropy above T_sw at tau0 and entropy flux s(T_sw) u.dsigma through the isotherm (per unit eta).
+
+    Fluid elements only cool in ideal hydrodynamics, so the two agree up to numerical entropy
+    production; a mismatch signals a wrong surface (missing pieces or wrong normals).
+    """
+    energy = torch.as_tensor(hydro.energy_density[0], dtype=torch.float64)
+    temperature = hydro.temperature[0].astype(np.float64)
+    pressure = eos.pressure(energy).numpy()
+    hot = temperature >= args.freezeout_temperature
+    entropy = np.where(hot, (energy.numpy() + pressure) / np.maximum(temperature, 1.0e-12), 0.0)
+    gamma0 = 1.0 / np.sqrt(1.0 - hydro.velocity_x[0].astype(np.float64) ** 2 - hydro.velocity_y[0].astype(np.float64) ** 2)
+    initial = float(np.sum(args.tau0 * entropy * gamma0) * dx * dx)
+
+    table_temperature = np.asarray(eos.table_temperature)
+    e_sw = float(np.interp(args.freezeout_temperature, table_temperature, np.asarray(eos.table_energy)))
+    p_sw = float(np.interp(args.freezeout_temperature, table_temperature, np.asarray(eos.table_pressure)))
+    s_sw = (e_sw + p_sw) / args.freezeout_temperature
+    vx = surface.velocity_x.astype(np.float64)
+    vy = surface.velocity_y.astype(np.float64)
+    gamma = 1.0 / np.sqrt(1.0 - vx * vx - vy * vy)
+    u_dsigma = gamma * (surface.d_sigma_tau + vx * surface.d_sigma_x + vy * surface.d_sigma_y)
+    return initial, float(s_sw * np.sum(u_dsigma))
 
 
 def physics_audit(
@@ -755,7 +875,10 @@ def physics_audit(
     hydro: HydroResult,
     surface: SurfaceResult,
     particles: ParticleResult,
+    entropy: tuple[float, float],
 ) -> dict[str, object]:
+    initial_entropy, surface_entropy = entropy
+    entropy_ratio = surface_entropy / max(initial_entropy, 1.0e-12)
     finite_fields = bool(
         np.all(np.isfinite(hydro.energy_density))
         and np.all(np.isfinite(hydro.velocity_x))
@@ -773,21 +896,23 @@ def physics_audit(
     )
     qgp_cells_at_hydrodynamization = int(np.count_nonzero(hydro.temperature[0] >= 0.165))
     initial_preequilibrium_flow = float(np.max(preequilibrium_speed[0]))
-    handoff_velocity_error = float(
-        np.max(
-            np.hypot(
-                hydro.velocity_x[0] - preequilibrium.velocity_x[-1],
-                hydro.velocity_y[0] - preequilibrium.velocity_y[-1],
-            )
-        )
+    # Handoff errors are judged on the medium that is particlized (T >= T_sw at tau0), like the
+    # Landau eigen-residual below; dilute fast cells near the vacuum only test the precision of the
+    # primitive-variable recovery and are reported separately.
+    handoff_medium = hydro.temperature[0] >= args.freezeout_temperature
+    velocity_mismatch = np.hypot(
+        hydro.velocity_x[0] - preequilibrium.velocity_x[-1],
+        hydro.velocity_y[0] - preequilibrium.velocity_y[-1],
     )
+    temperature_mismatch = np.abs(hydro.temperature[0] - preequilibrium.effective_temperature[-1])
+    handoff_velocity_error = float(np.max(velocity_mismatch[handoff_medium])) if np.any(handoff_medium) else np.inf
     handoff_peak_energy_error = abs(float(np.max(hydro.energy_density[0])) - args.initial_peak_energy)
     matched_medium = preequilibrium.effective_temperature >= args.freezeout_temperature
     max_landau_eigen_residual = float(
         np.max(preequilibrium.landau_residual[matched_medium]) if np.any(matched_medium) else np.inf
     )
-    handoff_temperature_error = float(
-        np.max(np.abs(hydro.temperature[0] - preequilibrium.effective_temperature[-1]))
+    handoff_temperature_error = (
+        float(np.max(temperature_mismatch[handoff_medium])) if np.any(handoff_medium) else np.inf
     )
     audit = {
         "passed": bool(
@@ -795,7 +920,8 @@ def physics_audit(
             and float(np.min(hydro.energy_density)) >= 0.0
             and float(np.max(hydro.max_velocity)) < 1.0
             and surface.tau.size >= 100
-            and particles.species.size == args.particles
+            and (args.particles <= 0 or particles.species.size == args.particles)
+            and abs(entropy_ratio - 1.0) < 0.05
             and float(np.min(particles.cooper_frye_weight)) >= 0.0
             and temperature_rises <= 1
             and np.all(np.diff(preequilibrium.tau) > 0.0)
@@ -822,6 +948,8 @@ def physics_audit(
         "landau_handoff_velocity_linf_error": handoff_velocity_error,
         "landau_handoff_peak_energy_error": handoff_peak_energy_error,
         "landau_handoff_temperature_linf_error_gev": handoff_temperature_error,
+        "landau_handoff_velocity_linf_error_all_cells": float(np.max(velocity_mismatch)),
+        "landau_handoff_temperature_linf_error_all_cells_gev": float(np.max(temperature_mismatch)),
         "max_landau_eigen_residual": max_landau_eigen_residual,
         "qgp_cells_at_hydrodynamization": qgp_cells_at_hydrodynamization,
         "hydro_snapshots": int(hydro.tau.size),
@@ -830,7 +958,16 @@ def physics_audit(
         "max_transverse_velocity": float(np.max(hydro.max_velocity)),
         "max_temperature_rise_count": temperature_rises,
         "freezeout_cells": int(surface.tau.size),
+        "freezeout_heating_elements": int(np.count_nonzero(surface.heating)),
         "sampled_particles": int(particles.species.size),
+        "entropy_at_tau0_above_tsw": initial_entropy,
+        "entropy_flux_through_freezeout": surface_entropy,
+        "entropy_flux_ratio": entropy_ratio,
+        "dn_deta_direct_pion": float(particles.dn_deta[0]),
+        "dn_deta_direct_kaon": float(particles.dn_deta[1]),
+        "dn_deta_direct_proton": float(particles.dn_deta[2]),
+        "dnch_deta_direct": particles.dnch_deta,
+        "expected_particles_in_eta_window": particles.expected_in_window,
         "mean_pt_gev": particles.mean_pt,
         "v2_reaction_plane": particles.v2,
         "v3_reaction_plane": particles.v3,
@@ -852,7 +989,7 @@ def save_event_cache(
     args.output.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         args.output,
-        format_version=np.asarray("hic_blender_event_v3"),
+        format_version=np.asarray("hic_blender_event_v4"),
         physics_model=np.asarray(
             "MC-Glauber + transverse collisionless pre-equilibrium + Landau matching + "
             "boost-invariant 2+1D ideal relativistic hydrodynamics + Cooper-Frye"
@@ -905,6 +1042,7 @@ def save_event_cache(
         surface_d_sigma_tau=surface.d_sigma_tau,
         surface_d_sigma_x=surface.d_sigma_x,
         surface_d_sigma_y=surface.d_sigma_y,
+        surface_heating=surface.heating.astype(np.uint8),
         particle_species_names=SPECIES_NAMES,
         particle_species=particles.species,
         particle_mass=particles.mass,
@@ -927,7 +1065,7 @@ def save_event_cache(
     print(f"Saved physics audit: {audit_path}")
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Generate a physics-driven heavy-ion event cache for Blender.")
     parser.add_argument("--output", type=Path, default=Path("outputs/blender_physics_event.npz"))
     parser.add_argument("--audit-output", type=Path, default=None)
@@ -953,14 +1091,34 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cfl", type=float, default=0.24)
     parser.add_argument("--freezeout-temperature", type=float, default=0.145, help="GeV")
     parser.add_argument("--eta-window", type=float, default=0.8)
-    parser.add_argument("--particles", type=int, default=900)
+    parser.add_argument(
+        "--particles",
+        type=int,
+        default=900,
+        help="Number of displayed hadrons; 0 draws Poisson(<N>) from the Cooper-Frye multiplicity in |eta_s| < eta-window.",
+    )
     parser.add_argument("--energy-floor", type=float, default=1.0e-8)
     parser.add_argument("--cpu", action="store_true")
-    return parser.parse_args()
+    return parser
 
 
-def main() -> None:
-    args = parse_args()
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
+
+
+@dataclass
+class EventResult:
+    device: torch.device
+    axis: np.ndarray
+    geometry: EventGeometry
+    preequilibrium: PreEquilibriumResult
+    hydro: HydroResult
+    surface: SurfaceResult
+    particles: ParticleResult
+    audit: dict[str, object]
+
+
+def validate_args(args: argparse.Namespace) -> None:
     if not 0.0 <= args.impact_parameter <= 2.0 * args.radius + 2.0:
         raise SystemExit("impact parameter is outside the supported Au+Au geometry")
     table_max_energy = read_eos_table(args.eos_table)[0][-1]
@@ -972,10 +1130,16 @@ def main() -> None:
         raise SystemExit("tau-initial must be positive and smaller than tau0")
     if args.preeq_snapshots < 2 or args.preeq_angles < 8:
         raise SystemExit("pre-equilibrium requires at least 2 snapshots and 8 angular streams")
+
+
+def simulate(args: argparse.Namespace, verbose: bool = True) -> EventResult:
+    """Run Glauber -> pre-equilibrium -> hydro -> freeze-out -> Cooper-Frye for one event."""
+    validate_args(args)
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
-    print(f"Device: {device}")
-    if device.type == "cuda":
-        print(f"GPU: {torch.cuda.get_device_name(0)}")
+    if verbose:
+        print(f"Device: {device}")
+        if device.type == "cuda":
+            print(f"GPU: {torch.cuda.get_device_name(0)}")
 
     torch.set_grad_enabled(False)
     rng = np.random.default_rng(args.seed)
@@ -983,16 +1147,28 @@ def main() -> None:
     axis = np.linspace(-args.extent, args.extent, args.grid_size, dtype=np.float32)
     eos = build_table_eos(args.eos_table)
     geometry = build_event_geometry(args, xx, yy, rng)
-    print(f"Glauber event: b={args.impact_parameter:.2f} fm, Npart={geometry.n_part}, Ncoll={geometry.n_coll}")
+    if verbose:
+        print(f"Glauber event: b={args.impact_parameter:.2f} fm, Npart={geometry.n_part}, Ncoll={geometry.n_coll}")
     preequilibrium = evolve_pre_equilibrium(args, geometry.source, eos)
     hydro = evolve_hydrodynamics(args, preequilibrium, eos, xx, yy, dx)
     surface = build_freezeout_surface(hydro, axis, dx)
     particles = sample_cooper_frye_particles(args, surface, rng)
-    audit = physics_audit(args, geometry, preequilibrium, hydro, surface, particles)
-    save_event_cache(args, device, geometry, preequilibrium, hydro, surface, particles, axis, audit)
+    entropy = entropy_closure(args, eos, hydro, surface, dx)
+    audit = physics_audit(args, geometry, preequilibrium, hydro, surface, particles, entropy)
+    return EventResult(device, axis, geometry, preequilibrium, hydro, surface, particles, audit)
+
+
+def main() -> None:
+    args = parse_args()
+    result = simulate(args)
+    surface, particles, audit = result.surface, result.particles, result.audit
+    save_event_cache(
+        args, result.device, result.geometry, result.preequilibrium, result.hydro, surface, particles, result.axis, audit
+    )
     print(
         f"Particlization: cells={surface.tau.size}, particles={particles.species.size}, "
-        f"mean pT={particles.mean_pt:.3f} GeV, v2={particles.v2:.4f}"
+        f"mean pT={particles.mean_pt:.3f} GeV, v2={particles.v2:.4f}, "
+        f"dNch/deta(direct)={particles.dnch_deta:.1f}, entropy ratio={audit['entropy_flux_ratio']:.3f}"
     )
     if not audit["passed"]:
         raise SystemExit("Physics audit failed. Inspect the generated audit JSON.")

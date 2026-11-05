@@ -83,19 +83,35 @@
       "rel": 0.03
     },
     "freezeout_cells": {
-      "value": 4481,
+      "value": 4667,
       "rel": 0.02
     },
+    "freezeout_heating_elements": {
+      "value": 93,
+      "rel": 0.15
+    },
+    "entropy_at_tau0_above_tsw": {
+      "value": 704.745466123319,
+      "rel": 0.001
+    },
+    "entropy_flux_ratio": {
+      "value": 0.9764493227388862,
+      "abs": 0.01
+    },
+    "dnch_deta_direct": {
+      "value": 36.47785357612548,
+      "rel": 0.03
+    },
     "mean_pt_gev": {
-      "value": 0.4738526710056734,
+      "value": 0.4795040123572082,
       "rel": 0.02
     },
     "v2_reaction_plane": {
-      "value": 0.007558927476079618,
+      "value": 0.014146554822746734,
       "abs": 0.004
     },
     "v3_reaction_plane": {
-      "value": 0.004456581322263737,
+      "value": 0.00285787642860903,
       "abs": 0.004
     }
   }

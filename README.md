@@ -35,12 +35,17 @@ Indicative values from the reference run (stored with tolerances in
 | Energy-weighted handoff pre-flow | `0.149 c` |
 | QGP-core cells at hydrodynamization | `3594` |
 | Sampled hadrons | `900` |
-| Mean transverse momentum | `0.474 GeV` |
-| Reaction-plane `v2` | `0.008` (single-sample Monte Carlo spread about 0.004) |
+| Mean transverse momentum | `0.480 GeV` |
+| Reaction-plane `v2` | `0.014` (single-sample Monte Carlo spread about 0.004) |
+| Entropy above `Tsw` at `tau0` / through freeze-out | `705 / 688` per unit rapidity |
+| Direct charged `dN/deta` (pi, K, p only; no decays) | `36` |
 
 These values are regression references rather than experimental predictions.
-The rendered images above predate the exact Milne source terms (P0-3) and the
-lattice-QCD equation of state (P0-1) described in [docs/ROADMAP.md](docs/ROADMAP.md);
+The reference keeps the uncalibrated `--initial-peak-energy 6`; see
+`hic/calibrate_normalization.py` and ROADMAP P0-2 for why the data calibration
+waits for resonance decays. The rendered images above predate the exact Milne
+source terms (P0-3), the lattice-QCD equation of state (P0-1) and the
+isotherm-crossing freeze-out surface (P0-4) described in [docs/ROADMAP.md](docs/ROADMAP.md);
 re-render them with `.\run_reproduce_blender.ps1`.
 The complete run writes a 13-second, 1280 x 720, 24 fps Blender animation and
 a machine-readable physics audit.
@@ -56,8 +61,11 @@ The reference Blender event uses:
 5. the HotQCD (2+1)-flavor lattice-QCD equation of state, tabulated
    thermodynamically consistently by `hic/lattice_eos.py`
 6. boost-invariant 2+1D ideal relativistic hydrodynamics
-7. a `Tsw=145 MeV` isothermal surface
-8. positive-contribution Cooper-Frye sampling of pion, kaon, and proton classes
+7. a `Tsw=145 MeV` isothermal hypersurface built from every isotherm crossing
+   (cooling and heating), with normals from the temperature gradient
+8. positive-contribution Cooper-Frye sampling of pion, kaon, and proton classes;
+   the mean multiplicity is the Cooper-Frye integral (`--particles 0` samples
+   the hadron count from it, the default keeps 900 hadrons for display)
 9. ballistic free streaming of sampled hadrons
 
 The visualization marks a `T>=165 MeV` QGP core separately from the 145 MeV
@@ -183,7 +191,9 @@ benchmarks are available through:
 
 The Blender event generator also writes
 `outputs\blender_physics_event.audit.json` and exits unsuccessfully if its
-causality, monotonicity, Landau-handoff, freeze-out, or particle checks fail.
+causality, monotonicity, Landau-handoff, freeze-out, entropy-conservation, or
+particle checks fail. The entropy check compares the entropy above `Tsw` at
+`tau0` with the entropy flux through the freeze-out surface (within 5%).
 
 ### Automated tests
 
@@ -215,6 +225,7 @@ the marker is removed together with the fix.
 | `.\run_particlization.ps1` | Standalone freeze-out particle sampling |
 | `.\run_event_pipeline.ps1 --events 3` | Small multi-event numerical pipeline |
 | `.\run_visualize_results.ps1` | Plotly report from generated CSV files |
+| `python -m hic.calibrate_normalization --observable entropy --target <dS/deta>` | Tune `--initial-peak-energy` to a multiplicity target |
 | `.\run_visual_simulation.ps1` | Browser-playable qualitative simulation |
 | `.\run_educational_visual.ps1` | Classroom-style educational board |
 | `.\run_educational_simulator_app.ps1` | Lightweight native educational simulator |
