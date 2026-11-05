@@ -30,6 +30,7 @@ def test_hydro_validation_suite_passes(tmp_path, eos_args):
         "gaussian_fireball",
         "bjorken_uniform_cooling",
         "bjorken_crossover_convergence",
+        "gubser_flow",
     }
     assert all(row["status"] in {"PASS", "SKIP"} for row in rows), rows
 

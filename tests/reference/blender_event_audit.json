@@ -71,7 +71,7 @@
       "rel": 0.001
     },
     "final_max_temperature_gev": {
-      "value": 0.14479848742485046,
+      "value": 0.14474830031394958,
       "rel": 0.01
     },
     "max_transverse_velocity": {
@@ -79,7 +79,7 @@
       "rel": 0.01
     },
     "hydro_snapshots": {
-      "value": 50,
+      "value": 52,
       "rel": 0.03
     },
     "freezeout_cells": {
@@ -87,15 +87,15 @@
       "rel": 0.02
     },
     "mean_pt_gev": {
-      "value": 0.449065722429544,
+      "value": 0.4663457126583453,
       "rel": 0.02
     },
     "v2_reaction_plane": {
-      "value": 0.011924979462989297,
+      "value": 0.01111126648239219,
       "abs": 0.004
     },
     "v3_reaction_plane": {
-      "value": -0.000685549387685386,
+      "value": 0.002155168760058744,
       "abs": 0.004
     }
   }

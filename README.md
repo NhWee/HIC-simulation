@@ -24,7 +24,8 @@ core is `T>=165 MeV`, and the outer contour marks `Tsw=145 MeV`.
 | --- | --- |
 | ![Landau-frame effective-temperature field during pre-equilibrium](docs/assets/qgp-formation.webp) | ![Pion, kaon, and proton classes after Cooper-Frye sampling](docs/assets/sampled-hadrons.webp) |
 
-Indicative values from the tested CUDA reference run:
+Indicative values from the reference run (stored with tolerances in
+`tests/reference/blender_event_audit.json` and checked by CI on CPU):
 
 | Observable | Result |
 | --- | ---: |
@@ -34,10 +35,13 @@ Indicative values from the tested CUDA reference run:
 | Energy-weighted handoff pre-flow | `0.149 c` |
 | QGP-core cells at hydrodynamization | `3524` |
 | Sampled hadrons | `900` |
-| Mean transverse momentum | `0.449 GeV` |
-| Reaction-plane `v2` | `0.0119` |
+| Mean transverse momentum | `0.466 GeV` |
+| Reaction-plane `v2` | `0.011` (Monte Carlo spread about 0.002) |
 
 These values are regression references rather than experimental predictions.
+The rendered images above predate the exact Milne source-term update described
+in [docs/ROADMAP.md](docs/ROADMAP.md) (P0-3), which raised the mean transverse
+momentum by about 4%; re-render them with `.\run_reproduce_blender.ps1`.
 The complete run writes a 13-second, 1280 x 720, 24 fps Blender animation and
 a machine-readable physics audit.
 
@@ -165,7 +169,10 @@ Run the hydrodynamic validation suite:
 ```
 
 It checks uniform rest and boosted states, Gaussian-fireball conservation,
-analytic Bjorken cooling, and crossover-EoS substep convergence. Additional
+analytic Bjorken cooling, crossover-EoS substep convergence, and the analytic
+Gubser flow (simultaneous transverse and boost-invariant longitudinal
+expansion; the first-order update reaches about 15% L-infinity error in the
+energy density on the default 160 x 160 grid and converges at first order). Additional
 benchmarks are available through:
 
 ```powershell

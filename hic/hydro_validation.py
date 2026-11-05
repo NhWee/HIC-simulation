@@ -203,6 +203,91 @@ def bjorken_crossover_convergence_test(args: argparse.Namespace, device: torch.d
     }
 
 
+def gubser_ideal_solution(
+    tau: float,
+    xx: torch.Tensor,
+    yy: torch.Tensor,
+    q: float,
+    energy_scale: float = 1.0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Gubser's boost-invariant, radially expanding ideal conformal flow (c_s^2 = 1/3).
+
+    S. S. Gubser, Phys. Rev. D 82, 085027 (2010), arXiv:1006.0006:
+        e = e_hat tau^(-4/3) (2q)^(8/3) / [1 + 2 q^2 (tau^2 + r^2) + q^4 (tau^2 - r^2)^2]^(4/3)
+        v_r = 2 q^2 tau r / (1 + q^2 tau^2 + q^2 r^2)
+    """
+    r2 = xx * xx + yy * yy
+    denominator = 1.0 + 2.0 * q * q * (tau * tau + r2) + q**4 * (tau * tau - r2) ** 2
+    energy_density = energy_scale * tau ** (-4.0 / 3.0) * (2.0 * q) ** (8.0 / 3.0) * denominator ** (-4.0 / 3.0)
+    radial_factor = 2.0 * q * q * tau / (1.0 + q * q * tau * tau + q * q * r2)
+    return energy_density, radial_factor * xx, radial_factor * yy
+
+
+def gubser_flow_error(
+    grid_size: int,
+    extent: float,
+    cfl: float,
+    tau0: float,
+    tau_end: float,
+    q: float,
+    compare_radius: float,
+    device: torch.device,
+) -> tuple[float, float]:
+    """Evolve Gubser initial data with the production update and return L-infinity errors.
+
+    Returns (max |e - e_exact| / max e_exact, max |v - v_exact|) over r <= compare_radius at tau_end.
+    """
+    eos = EquationOfState(
+        kind="conformal",
+        speed_of_sound2=1.0 / 3.0,
+        low_speed_of_sound2=1.0 / 3.0,
+        high_speed_of_sound2=1.0 / 3.0,
+        transition_energy=1.0,
+        transition_width=1.0,
+    )
+    energy_floor = 1.0e-12
+    xx, yy, dx = make_grid(grid_size, extent, device)
+    xx = xx.to(torch.float64)
+    yy = yy.to(torch.float64)
+    state = conserved_from_primitive(*gubser_ideal_solution(tau0, xx, yy, q), eos)
+    tau = tau0
+    while tau < tau_end - 1.0e-12:
+        dt = min(cfl * dx, tau_end - tau)
+        state = rusanov_step(state, dx, dt, eos, energy_floor)
+        state = apply_bjorken_cooling(state, tau, dt, eos, energy_floor)
+        tau += dt
+    energy_density, _, velocity_x, velocity_y = primitive_from_conserved(
+        state[0], state[1], state[2], eos, energy_floor
+    )
+    exact_energy, exact_vx, exact_vy = gubser_ideal_solution(tau_end, xx, yy, q)
+    inside = xx * xx + yy * yy <= compare_radius * compare_radius
+    energy_error = torch.max(torch.abs(energy_density - exact_energy)[inside]) / torch.max(exact_energy[inside])
+    velocity_error = torch.max(torch.hypot(velocity_x - exact_vx, velocity_y - exact_vy)[inside])
+    return float(energy_error.cpu()), float(velocity_error.cpu())
+
+
+def gubser_flow_test(args: argparse.Namespace, device: torch.device) -> dict[str, float | str]:
+    energy_error, velocity_error = gubser_flow_error(
+        args.gubser_grid_size,
+        args.gubser_extent,
+        args.cfl,
+        args.gubser_tau0,
+        args.gubser_tau_end,
+        args.gubser_q,
+        args.gubser_radius,
+        device,
+    )
+    passed = energy_error <= args.gubser_tolerance and velocity_error <= args.gubser_velocity_tolerance
+    return {
+        "test": "gubser_flow",
+        "metric": "linf_relative_energy_density_error",
+        "value": energy_error,
+        "tolerance": args.gubser_tolerance,
+        "status": "PASS" if passed else "FAIL",
+        "velocity_linf_error": velocity_error,
+    }
+
+
 def run_validation(args: argparse.Namespace) -> list[dict[str, float | str]]:
     device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
     print(f"Using device: {device}")
@@ -215,10 +300,11 @@ def run_validation(args: argparse.Namespace) -> list[dict[str, float | str]]:
         gaussian_energy_test(args, device),
         bjorken_uniform_cooling_test(args, device),
         bjorken_crossover_convergence_test(args, device),
+        gubser_flow_test(args, device),
     ]
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Validate the ideal hydrodynamics finite-volume update.")
     parser.add_argument("--grid-size", type=int, default=80, help="2D transverse grid size.")
     parser.add_argument("--extent", type=float, default=12.0, help="Half-width of the transverse plane.")
@@ -248,16 +334,36 @@ def parse_args() -> argparse.Namespace:
         default=5.0e-3,
         help="Coarse/fine relative tolerance for crossover Bjorken cooling.",
     )
+    parser.add_argument("--gubser-grid-size", type=int, default=160, help="Grid size for the Gubser-flow test.")
+    parser.add_argument("--gubser-extent", type=float, default=8.0, help="Half-width (fm) of the Gubser-flow grid.")
+    parser.add_argument("--gubser-q", type=float, default=1.0, help="Gubser inverse length scale q (1/fm).")
+    parser.add_argument("--gubser-tau0", type=float, default=1.0, help="Gubser initial proper time (fm/c).")
+    parser.add_argument("--gubser-tau-end", type=float, default=2.0, help="Gubser comparison proper time (fm/c).")
+    parser.add_argument("--gubser-radius", type=float, default=3.0, help="Compare against Gubser flow for r <= radius (fm).")
+    parser.add_argument(
+        "--gubser-tolerance",
+        type=float,
+        default=0.18,
+        help="L-infinity relative energy-density tolerance for Gubser flow. The first-order Rusanov "
+        "update gives ~0.15 on the default grid and converges at first order.",
+    )
+    parser.add_argument(
+        "--gubser-velocity-tolerance", type=float, default=0.03, help="L-infinity velocity tolerance for Gubser flow."
+    )
     parser.add_argument("--cpu", action="store_true", help="Force CPU execution.")
     parser.add_argument("--output", type=Path, default=Path("outputs/hydro_validation.csv"), help="Output CSV path.")
-    return parser.parse_args()
+    return parser
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    return build_parser().parse_args(argv)
 
 
 def main() -> None:
     args = parse_args()
     rows = run_validation(args)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["test", "metric", "value", "tolerance", "status", "final_momentum_norm"]
+    fieldnames = ["test", "metric", "value", "tolerance", "status", "final_momentum_norm", "velocity_linf_error"]
     with args.output.open("w", newline="") as output_file:
         writer = csv.DictWriter(output_file, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()

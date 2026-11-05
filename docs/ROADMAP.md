@@ -122,11 +122,11 @@ Gubser 해에 대해 수렴 차수(≈2)를 측정해 `hydro_convergence`에 기
 | 단계 | 작업 | 완료 기준 |
 | --- | --- | --- |
 | 1 ✅ | pytest + CI 골격, 현재 동작을 기준값으로 고정 | CI 녹색. 이후 변경의 효과를 숫자로 볼 수 있음 (아래 "1단계 결과") |
-| 2 | P0-3 Milne 소스 + Gubser 검증 | Gubser 해와 L∞ 상대오차 < 1% (격자 160) |
+| 2 ✅ | P0-3 Milne 소스 + Gubser 검증 | Gubser 1차 수렴 확인, 격자 160에서 L∞ 15% (1% 목표는 6단계로 이동; 아래 "2단계 결과") |
 | 3 | P0-1 격자 QCD EoS | 일관성 검사 통과, 표 범위 ≥ 100 GeV/fm³ |
 | 4 | P0-2 정규화 + P0-4 | 0–5% dN_ch/dη 재현, 입자 수가 Cooper-Frye 적분에서 결정 |
 | 5 | P1-2 관측량 + 중심도 앙상블 | v₂{2}(centrality)를 STAR/PHENIX 데이터와 비교한 그림 (ideal hydro이므로 과대 예측이 정상) |
-| 6 | P1-1 KT solver | 수렴 차수 ≈ 2 |
+| 6 | P1-1 KT solver | Gubser 수렴 차수 ≈ 2, 격자 160에서 L∞ < 1~2%. `--gubser-tolerance` 기본값 축소 |
 | 7 | P2-1 점성 hydro | η/s 스캔 시 v₂가 단조 감소, Gubser 점성 해 검증 |
 | 8 | P2-2/3 공명 붕괴, afterburner | 종별 ⟨pT⟩, p/π 비 비교 |
 
@@ -147,6 +147,32 @@ Gubser 해에 대해 수렴 차수(≈2)를 측정해 `hydro_convergence`에 기
   전달하지 않아 README의 `run_hydro_convergence.ps1` 명령이 `AttributeError`로 죽었습니다.
 - 남은 공백: shock tube에 해석해(Riemann) 비교가 없어 에너지 보존만 검사합니다.
   Blender 장면 빌더(`tools/blender_hic_scene.py`)와 GUI 앱은 bpy/Qt가 필요해 테스트 대상에서 뺐습니다.
+
+## 2단계 결과 (완료)
+
+- `ideal_hydro_2d.apply_bjorken_cooling`을 정확한 Milne 소스항으로 교체했습니다.
+  τ·T^τi는 해석적으로 보존하고, T^ττ는 s = ln τ에 대해 RK4(Δs ≤ 0.02)로 적분하며,
+  매 stage마다 (T^ττ, T^τi)에서 압력을 복원합니다. 이 함수를 쓰는 기준 이벤트,
+  `ideal_hydro_2d`, PySide 앱에 모두 적용됩니다.
+- Gubser flow 검증(`hydro_validation`의 `gubser_flow`, q = 1 fm⁻¹, τ 1 → 2 fm/c, r ≤ 3 fm)을 추가했습니다.
+  해석해 공식 자체도 유한차분으로 Milne 방정식 잔차 약 10⁻⁸임을 테스트에서 확인합니다.
+
+| 격자 (±8 fm) | 새 소스: e L∞ 상대오차 | v L∞ | 기존 소스: e | v |
+| ---: | ---: | ---: | ---: | ---: |
+| 80 | 0.284 | 0.045 | 0.545 | 0.117 |
+| 160 | 0.154 | 0.024 | 0.432 | 0.099 |
+| 320 | 0.081 | 0.012 | 0.372 | 0.096 |
+
+  기존 소스는 격자를 늘려도 약 37%에서 멈추는 **수렴하지 않는 체계적 오류**였습니다.
+  새 소스는 1차로 수렴합니다. τ 1 → 1.2 fm/c만 보면 격자 160에서 2.4%입니다.
+  남은 오차는 1차 Rusanov의 수치 확산이므로, **1% 목표는 6단계(KT solver)의 완료 기준으로 옮겼습니다.**
+- 기준 이벤트 변화: ⟨pT⟩ 0.449 → 0.466 GeV (+3.8%), hydro 스냅샷 50 → 52(수명 증가).
+  v₂는 단일 샘플 기준 0.0119 → 0.0111로, Monte Carlo 오차(약 0.002) 안입니다.
+  진단 때 8회 평균으로 본 v₂ 증가(약 +20%)와 모순되지 않습니다.
+  `tests/reference/blender_event_audit.json`, README, REPRODUCIBILITY를 갱신했습니다.
+- 부수 효과: `bjorken_crossover_convergence` 오차가 6.7×10⁻⁴에서 1.2×10⁻⁷로 줄었습니다.
+  `hydro_convergence`는 검증 parser의 기본값을 물려받도록 바꿔, 1단계에서 본 "인자 누락" 버그가 재발하지 않게 했습니다.
+- 남은 일: `docs/assets`의 렌더 이미지는 수정 전 물리로 만든 것입니다(Blender가 필요해 여기서 재렌더링하지 못함).
 
 ## 진단 재현 메모
 

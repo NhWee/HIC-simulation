@@ -2,33 +2,20 @@ import argparse
 import csv
 from pathlib import Path
 
+from hic.hydro_validation import build_parser as build_validation_parser
 from hic.hydro_validation import run_validation
 
 
 def validation_namespace(args: argparse.Namespace, grid_size: int, cfl: float) -> argparse.Namespace:
-    return argparse.Namespace(
-        grid_size=grid_size,
-        extent=args.extent,
-        steps=args.steps,
-        cfl=cfl,
-        eos=args.eos,
-        eos_table=args.eos_table,
-        speed_of_sound2=args.speed_of_sound2,
-        low_speed_of_sound2=args.low_speed_of_sound2,
-        high_speed_of_sound2=args.high_speed_of_sound2,
-        transition_energy=args.transition_energy,
-        transition_width=args.transition_width,
-        energy_floor=args.energy_floor,
-        tau0=args.tau0,
-        boost_velocity=args.boost_velocity,
-        gaussian_sigma=args.gaussian_sigma,
-        uniform_tolerance=args.uniform_tolerance,
-        gaussian_energy_tolerance=args.gaussian_energy_tolerance,
-        bjorken_tolerance=args.bjorken_tolerance,
-        crossover_bjorken_tolerance=args.crossover_bjorken_tolerance,
-        cpu=args.cpu,
-        output=Path("NUL"),
-    )
+    # Start from the validation suite's own defaults so that new validation options never go
+    # missing here, then override the options this scan controls.
+    namespace = build_validation_parser().parse_args([])
+    for key, value in vars(args).items():
+        if hasattr(namespace, key) and key != "output":
+            setattr(namespace, key, value)
+    namespace.grid_size = grid_size
+    namespace.cfl = cfl
+    return namespace
 
 
 def run_scan(args: argparse.Namespace) -> list[dict[str, float | str]]:

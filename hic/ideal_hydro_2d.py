@@ -1,5 +1,6 @@
 import argparse
 import csv
+import math
 import sys
 from pathlib import Path
 
@@ -94,24 +95,52 @@ def apply_bjorken_cooling(
     dt: float,
     eos: EquationOfState,
     energy_floor: float,
+    max_log_step: float = 0.02,
 ) -> torch.Tensor:
-    energy_density, pressure, velocity_x, velocity_y = primitive_from_conserved(
-        state[0], state[1], state[2], eos, energy_floor
+    """Integrate the boost-invariant (Milne) source terms from tau to tau + dt.
+
+    With u^eta = 0 the longitudinal expansion adds, on top of the transverse fluxes,
+
+        d(T^tt)/dtau = -(T^tt + p) / tau,     d(T^ti)/dtau = -T^ti / tau,
+
+    where p = tau^2 T^etaeta is the local pressure. The momentum equation is solved exactly
+    (tau * T^ti is constant). The energy equation is integrated with classical RK4 in
+    s = ln(tau), sub-stepped so that each step spans at most ``max_log_step`` in s, while the
+    pressure is recovered from the full (T^tt, T^ti) state at every stage. For a fluid at
+    rest this reduces to de/dtau = -(e + p)/tau.
+    """
+    start_tau = max(tau, 1.0e-8)
+    end_tau = max(tau + dt, 1.0e-8)
+    total_log = math.log(end_tau / start_tau)
+    substeps = max(1, math.ceil(abs(total_log) / max_log_step))
+    step = total_log / substeps
+    momentum_x0, momentum_y0 = state[1], state[2]
+
+    def energy_rate(energy: torch.Tensor, log_tau: float) -> torch.Tensor:
+        scale = math.exp(-log_tau)  # tau0 / tau, from tau * T^ti = const
+        energy = torch.clamp(energy, min=energy_floor)
+        _, pressure, _, _ = primitive_from_conserved(
+            energy, momentum_x0 * scale, momentum_y0 * scale, eos, energy_floor
+        )
+        return -(energy + pressure)
+
+    energy = state[0]
+    for index in range(substeps):
+        log_tau = index * step
+        k1 = energy_rate(energy, log_tau)
+        k2 = energy_rate(energy + 0.5 * step * k1, log_tau + 0.5 * step)
+        k3 = energy_rate(energy + 0.5 * step * k2, log_tau + 0.5 * step)
+        k4 = energy_rate(energy + step * k3, log_tau + step)
+        energy = energy + step / 6.0 * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
+    scale = start_tau / end_tau
+    return torch.stack(
+        (
+            torch.clamp(energy, min=energy_floor),
+            momentum_x0 * scale,
+            momentum_y0 * scale,
+        )
     )
-    if eos.kind == "conformal":
-        cooling = eos.bjorken_cooling_factor(tau, dt)
-        cooled_energy_density = energy_density * cooling
-    else:
-        # Second-order update of de/dtau = -(e + p(e)) / tau.
-        start_tau = max(tau, 1.0e-8)
-        end_tau = max(tau + dt, 1.0e-8)
-        start_rate = -(energy_density + pressure) / start_tau
-        predicted_energy = torch.clamp(energy_density + dt * start_rate, min=energy_floor)
-        predicted_pressure = eos.pressure(predicted_energy)
-        end_rate = -(predicted_energy + predicted_pressure) / end_tau
-        cooled_energy_density = energy_density + 0.5 * dt * (start_rate + end_rate)
-    cooled_energy_density = torch.clamp(cooled_energy_density, min=energy_floor)
-    return conserved_from_primitive(cooled_energy_density, velocity_x, velocity_y, eos)
 
 
 def fluxes(

@@ -102,7 +102,11 @@ The reference video is 1280 x 720, 24 fps, 312 frames, and 13 seconds long.
 ## Reference audit
 
 `outputs/blender_physics_event.audit.json` must contain `"passed": true`.
-For seed 17 and `b=5.7 fm`, the tested CUDA run produced:
+For seed 17 and `b=5.7 fm`, the reference run produced the values below. The
+same values, with per-observable tolerances, are stored in
+`tests/reference/blender_event_audit.json` and checked by `python -m pytest`
+(CPU). The hydrodynamic and particle values reflect the exact Milne
+source terms introduced for ROADMAP item P0-3.
 
 ```text
 Npart                                      236
@@ -111,13 +115,13 @@ pre-equilibrium tau range                  0.1 -> 0.6 fm/c
 initial max Landau effective temperature   0.61184 GeV
 handoff max effective temperature          0.37000 GeV
 energy-weighted handoff pre-flow            0.14869 c
-Landau eigen-equation residual              3.52e-7
+Landau eigen-equation residual              3.54e-7
 handoff temperature L-infinity error        7.38e-7 GeV
 QGP-core cells at hydrodynamization         3524
 freeze-out cells                            4039
 sampled particles                           900
-mean pT                                     0.4491 GeV
-v2 relative to the reaction plane           0.0119
+mean pT                                     0.4663 GeV
+v2 relative to the reaction plane           0.0111
 ```
 
 The integer Glauber geometry should be stable for the fixed NumPy seed. Small
