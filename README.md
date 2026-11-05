@@ -35,17 +35,19 @@ Indicative values from the reference run (stored with tolerances in
 | Energy-weighted handoff pre-flow | `0.149 c` |
 | QGP-core cells at hydrodynamization | `3594` |
 | Sampled hadrons | `900` |
-| Mean transverse momentum | `0.480 GeV` |
-| Reaction-plane `v2` | `0.014` (single-sample Monte Carlo spread about 0.004) |
+| Mean transverse momentum (charged, after decays) | `0.442 GeV` |
+| Mean pT of pi / K / p (charged) | `0.40 / 0.54 / 0.73 GeV` |
+| Reaction-plane `v2` (charged) | `0.015` (single-sample Monte Carlo spread about 0.004) |
 | Entropy above `Tsw` at `tau0` / through freeze-out | `705 / 688` per unit rapidity |
-| Direct charged `dN/deta` (pi, K, p only; no decays) | `36` |
+| Charged `dN/deta` after resonance decays | `64` |
+| Hadron-resonance-gas / lattice entropy density at `Tsw` | `0.885` |
 
 These values are regression references rather than experimental predictions.
-The reference keeps the uncalibrated `--initial-peak-energy 6`; see
-`hic/calibrate_normalization.py` and ROADMAP P0-2 for why the data calibration
-waits for resonance decays. The rendered images above predate the exact Milne
+The reference keeps the uncalibrated `--initial-peak-energy 6`; calibrate it
+with `hic/calibrate_normalization.py` against a measured `dNch/deta` (ROADMAP P0-2
+and P2-2). The rendered images above predate the exact Milne
 source terms (P0-3), the lattice-QCD equation of state (P0-1) and the
-isotherm-crossing freeze-out surface (P0-4) described in [docs/ROADMAP.md](docs/ROADMAP.md);
+isotherm-crossing freeze-out surface (P0-4) and resonance decays (P2-2) described in [docs/ROADMAP.md](docs/ROADMAP.md);
 re-render them with `.\run_reproduce_blender.ps1`.
 The complete run writes a 13-second, 1280 x 720, 24 fps Blender animation and
 a machine-readable physics audit.
@@ -63,10 +65,13 @@ The reference Blender event uses:
 6. boost-invariant 2+1D ideal relativistic hydrodynamics
 7. a `Tsw=145 MeV` isothermal hypersurface built from every isotherm crossing
    (cooling and heating), with normals from the temperature gradient
-8. positive-contribution Cooper-Frye sampling of pion, kaon, and proton classes;
-   the mean multiplicity is the Cooper-Frye integral (`--particles 0` samples
-   the hadron count from it, the default keeps 900 hadrons for display)
-9. ballistic free streaming of sampled hadrons
+8. positive-contribution Cooper-Frye sampling of a hadron resonance gas (229
+   charge states up to about 1.8 GeV, `hic/hadrons.py`); the mean multiplicity is
+   the Cooper-Frye integral (`--particles 0` samples the hadron count from it,
+   the default draws 900 hadrons at the surface for display)
+9. strong and electromagnetic resonance decays (isospin-resolved two-body and
+   phase-space three-body channels; weak decays are not performed)
+10. ballistic free streaming of the final hadrons
 
 The visualization marks a `T>=165 MeV` QGP core separately from the 145 MeV
 particlization contour. The pre-equilibrium color field uses a Landau-frame
@@ -75,8 +80,8 @@ equilibrium before hydrodynamization.
 
 This is a physically constrained prototype, not a precision event generator.
 It does not include second-order viscous hydrodynamics, a full 3+1D kinetic
-pre-equilibrium solver, jet-medium interactions, resonance decays, or a
-SMASH/UrQMD hadronic afterburner.
+pre-equilibrium solver, jet-medium interactions, hadronic rescattering (a
+SMASH/UrQMD afterburner), resonance spectral widths, or quantum statistics.
 
 ## Quick start
 

@@ -5,6 +5,8 @@ from pathlib import Path
 
 import torch
 
+_TABLE_CACHE: dict[tuple, torch.Tensor] = {}
+
 
 @dataclass(frozen=True)
 class EquationOfState:
@@ -19,9 +21,19 @@ class EquationOfState:
     table_sound_speed2: tuple[float, ...] = ()
     table_temperature: tuple[float, ...] = ()
 
+    def _table_tensor(self, values: tuple[float, ...], dtype: torch.dtype, device: torch.device) -> torch.Tensor:
+        # Cache converted tables, keyed by their contents, dtype and device, instead of rebuilding a
+        # tensor on every call (this dominated the cost of the table-EoS primitive recovery).
+        key = (values, dtype, str(device))
+        tensor = _TABLE_CACHE.get(key)
+        if tensor is None:
+            tensor = torch.as_tensor(values, dtype=dtype, device=device)
+            _TABLE_CACHE[key] = tensor
+        return tensor
+
     def _interpolate_table(self, energy_density: torch.Tensor, values: tuple[float, ...]) -> torch.Tensor:
-        table_energy = torch.as_tensor(self.table_energy, dtype=energy_density.dtype, device=energy_density.device)
-        table_values = torch.as_tensor(values, dtype=energy_density.dtype, device=energy_density.device)
+        table_energy = self._table_tensor(self.table_energy, energy_density.dtype, energy_density.device)
+        table_values = self._table_tensor(values, energy_density.dtype, energy_density.device)
         clipped = torch.clamp(energy_density, min=float(table_energy[0]), max=float(table_energy[-1]))
         upper = torch.bucketize(clipped.reshape(-1), table_energy)
         upper = torch.clamp(upper, min=1, max=table_energy.numel() - 1)

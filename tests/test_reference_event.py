@@ -30,7 +30,7 @@ def test_matches_stored_reference(event):
 def test_cache_contents_are_consistent(event):
     audit, cache = event
     with np.load(cache) as data:
-        assert str(data["format_version"]) == "hic_blender_event_v4"
+        assert str(data["format_version"]) == "hic_blender_event_v5"
         assert int(data["n_part"]) == audit["n_part"]
         assert int(data["particle_species"].size) == audit["sampled_particles"]
         assert data["energy_density"].shape[0] == audit["hydro_snapshots"]

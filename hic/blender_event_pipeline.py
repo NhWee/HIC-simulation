@@ -17,6 +17,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from hic.eos import EquationOfState, read_eos_table
+from hic.hadrons import CLASS_NAMES, decay_all, hadron_table, hrg_thermodynamics, number_densities
 from hic.glauber_ensemble import eccentricity_n
 from hic.ideal_hydro_2d import (
     apply_bjorken_cooling,
@@ -27,11 +28,7 @@ from hic.ideal_hydro_2d import (
 from hic.nuclear_collision_2d import make_grid, tag_glauber_collisions
 
 
-SPECIES_NAMES = np.asarray(("pion", "kaon", "proton"))
-SPECIES_MASSES = np.asarray((0.13957, 0.49368, 0.93827), dtype=np.float64)
-SPECIES_DEGENERACIES = np.asarray((3.0, 4.0, 4.0), dtype=np.float64)
-# Charged fraction of each isospin multiplet: (pi+, pi-, pi0), (K+, K-, K0, K0bar), (p, pbar, n, nbar).
-SPECIES_CHARGED_FRACTION = np.asarray((2.0 / 3.0, 0.5, 0.5), dtype=np.float64)
+SPECIES_NAMES = np.asarray(CLASS_NAMES)  # display classes of final hadrons: pions, kaons, baryons
 HBARC_GEV_FM = 0.1973269804
 
 
@@ -99,7 +96,12 @@ class SurfaceResult:
 
 @dataclass
 class ParticleResult:
-    species: np.ndarray
+    """Final-state hadrons of the displayed sample plus pool-based Cooper-Frye observables."""
+
+    species: np.ndarray  # display class (index into SPECIES_NAMES)
+    hadron_id: np.ndarray  # index into hadrons.hadron_table()
+    parent_id: np.ndarray  # hadron emitted at the freeze-out surface (equals hadron_id if not a decay product)
+    charge: np.ndarray
     mass: np.ndarray
     tau: np.ndarray
     eta_s: np.ndarray
@@ -110,12 +112,16 @@ class ParticleResult:
     momentum_x: np.ndarray
     momentum_y: np.ndarray
     cooper_frye_weight: np.ndarray
-    mean_pt: float
-    v2: float
+    primaries: int  # hadrons drawn at the surface for the displayed sample
+    mean_pt: float  # charged final hadrons
+    v2: float  # charged final hadrons, reaction plane
     v3: float
-    dn_deta: np.ndarray  # Cooper-Frye mean dN/d(eta_s) per species (direct thermal hadrons)
-    dnch_deta: float
-    expected_in_window: float
+    dn_dy: np.ndarray  # final dN/dy per display class (all charge states)
+    mean_pt_identified: np.ndarray  # charged pi, K, p+pbar
+    dnch_dy: float
+    dnch_deta: float  # pseudorapidity density at midrapidity
+    dn_dy_primaries: float
+    expected_in_window: float  # primaries in |eta_s| < eta_window
 
 
 def sample_woods_saxon_3d(
@@ -676,45 +682,26 @@ def build_freezeout_surface(hydro: HydroResult, axis: np.ndarray, dx: float) -> 
     )
 
 
-def bessel_k2(z: float) -> float:
-    integration_axis = np.linspace(0.0, 12.0, 6000)
-    integrand = np.exp(-z * np.cosh(integration_axis)) * np.cosh(2.0 * integration_axis)
-    return float(np.trapezoid(integrand, integration_axis))
-
-
-def thermal_number_densities(temperature: float) -> np.ndarray:
-    """Boltzmann number density n_i = g m^2 T K_2(m/T) / (2 pi^2) per species, in 1/fm^3."""
-    values = [
-        degeneracy * mass * mass * temperature * bessel_k2(mass / temperature) / (2.0 * math.pi**2)
-        for mass, degeneracy in zip(SPECIES_MASSES, SPECIES_DEGENERACIES)
-    ]
-    return np.asarray(values, dtype=np.float64) / HBARC_GEV_FM**3
-
-
-def thermal_species_probabilities(temperature: float) -> np.ndarray:
-    densities = []
-    for mass, degeneracy in zip(SPECIES_MASSES, SPECIES_DEGENERACIES):
-        densities.append(degeneracy * mass * mass * temperature * bessel_k2(mass / temperature))
-    values = np.asarray(densities, dtype=np.float64)
-    return values / values.sum()
-
-
 def sample_thermal_magnitudes(
     masses: np.ndarray,
     temperature: float,
     rng: np.random.Generator,
+    grid_points: int = 4096,
 ) -> np.ndarray:
+    """Rest-frame momentum magnitudes from p^2 exp(-E/T), by inverse transform of a tabulated CDF.
+
+    A tabulated CDF per mass keeps the cost independent of m/T (rejection from a massless proposal
+    accepts only ~exp(-m/T) of the trials, ~1e-5 for the heaviest resonances).
+    """
     result = np.empty(masses.size, dtype=np.float64)
     for mass in np.unique(masses):
         target = np.flatnonzero(masses == mass)
-        accepted_values: list[float] = []
-        while len(accepted_values) < target.size:
-            batch = max(256, 5 * (target.size - len(accepted_values)))
-            momentum = rng.gamma(shape=3.0, scale=temperature, size=batch)
-            energy = np.sqrt(momentum * momentum + mass * mass)
-            probability = np.exp(-(energy - momentum) / temperature)
-            accepted_values.extend(momentum[rng.random(batch) < probability].tolist())
-        result[target] = np.asarray(accepted_values[: target.size], dtype=np.float64)
+        p_max = 30.0 * temperature + 6.0 * math.sqrt(max(mass * temperature, 1.0e-12))
+        momentum = np.linspace(0.0, p_max, grid_points)
+        density = momentum**2 * np.exp(-(np.sqrt(momentum**2 + mass**2) - mass) / temperature)
+        cdf = np.concatenate(([0.0], np.cumsum(0.5 * (density[1:] + density[:-1]) * np.diff(momentum))))
+        cdf /= cdf[-1]
+        result[target] = np.interp(rng.random(target.size), cdf, momentum)
     return result
 
 
@@ -742,18 +729,38 @@ def sample_cooper_frye_particles(
     args: argparse.Namespace,
     surface: SurfaceResult,
     rng: np.random.Generator,
+    species: np.ndarray | None = None,
+    decays: bool | None = None,
 ) -> ParticleResult:
+    """Positive-contribution Cooper-Frye sampling of the hadron resonance gas, then resonance decays.
+
+    ``species`` selects hadron-table states to emit (default: every hadron); ``decays`` defaults to
+    ``not args.no_decays``. A large candidate pool is importance-weighted by max(p.dsigma, 0) and
+    decayed; observables are pool averages over the final hadrons, while the displayed sample is a
+    weighted draw of primaries together with their decay products.
+    """
+    states, _ = hadron_table()
+    if species is None:
+        species = np.asarray([i for i, h in enumerate(states) if h.name != "gamma"])
+    species = np.asarray(species, dtype=np.int64)
+    if decays is None:
+        decays = not getattr(args, "no_decays", False)
+    state_mass = np.asarray([h.mass for h in states])
+    state_charge = np.asarray([h.charge for h in states])
+    state_class = np.asarray([h.display_class for h in states])
+    is_photon = np.asarray([h.name == "gamma" for h in states])
+
     envelope = np.abs(surface.d_sigma_tau) + np.abs(surface.d_sigma_x) + np.abs(surface.d_sigma_y)
     envelope = np.maximum(envelope.astype(np.float64), 1.0e-14)
     surface_probability = envelope / envelope.sum()
-    species_probability = thermal_species_probabilities(args.freezeout_temperature)
-    # The displayed particle set stays compact, while a larger importance-
-    # sampled pool stabilizes integrated pT and vn estimates.
-    candidate_count = max(args.particles * 32, 40000 if args.particles <= 0 else 12000)
+    densities = number_densities(args.freezeout_temperature)[species]
+    candidate_count = getattr(args, "candidate_pool", None) or max(
+        args.particles * 32, 40000 if args.particles <= 0 else 12000
+    )
 
     cell = rng.choice(surface.tau.size, size=candidate_count, replace=True, p=surface_probability)
-    species = rng.choice(SPECIES_NAMES.size, size=candidate_count, replace=True, p=species_probability)
-    masses = SPECIES_MASSES[species]
+    candidate_state = species[rng.choice(species.size, size=candidate_count, replace=True, p=densities / densities.sum())]
+    masses = state_mass[candidate_state]
     momentum_magnitude = sample_thermal_magnitudes(masses, args.freezeout_temperature, rng)
 
     cosine_theta = rng.uniform(-1.0, 1.0, size=candidate_count)
@@ -777,64 +784,90 @@ def sample_cooper_frye_particles(
             surface.velocity_y[cell] / cosh_eta,
         )
     ).astype(np.float64)
-    lab_energy, lab_momentum = lorentz_boost(rest_energy, rest_momentum, beta)
-    momentum_longitudinal = lab_momentum[:, 0]
-    momentum_x = lab_momentum[:, 1]
-    momentum_y = lab_momentum[:, 2]
-    momentum_tau = cosh_eta * lab_energy - np.sinh(eta_s) * momentum_longitudinal
+    lab_energy, lab_momentum = lorentz_boost(rest_energy, rest_momentum, beta)  # columns (z, x, y)
+    momentum_tau = cosh_eta * lab_energy - np.sinh(eta_s) * lab_momentum[:, 0]
     p_dot_sigma = (
         momentum_tau * surface.d_sigma_tau[cell]
-        + momentum_x * surface.d_sigma_x[cell]
-        + momentum_y * surface.d_sigma_y[cell]
+        + lab_momentum[:, 1] * surface.d_sigma_x[cell]
+        + lab_momentum[:, 2] * surface.d_sigma_y[cell]
     )
     importance = np.maximum(p_dot_sigma, 0.0) / (rest_energy * envelope[cell])
     if float(importance.sum()) <= 0.0:
         raise RuntimeError("The Cooper-Frye surface produced no positive contributions.")
-    selection_probability = importance / importance.sum()
 
-    # Mean multiplicity per unit space-time rapidity. Candidates are drawn with probability
-    # (envelope_c / sum envelope) (n_i / n_total) f_i(p*), so for each species
-    #   dN_i/deta = n_total * sum(envelope) * E[importance; species i],
-    # the Monte Carlo estimate of integral d^3p/E f_i(p.u) max(p.dsigma, 0).
-    densities = thermal_number_densities(args.freezeout_temperature)
+    # Candidates are drawn with probability (envelope_c / sum envelope)(n_i / n_total) f_i(p*), so
+    # pool_scale * sum(importance) estimates the Cooper-Frye integral dN/deta_s (= dN/dy by boost
+    # invariance) of whatever subset of the pool is summed.
     pool_scale = densities.sum() * float(envelope.sum()) / candidate_count
-    dn_deta = np.asarray(
-        [pool_scale * float(importance[species == index].sum()) for index in range(SPECIES_NAMES.size)]
-    )
-    dnch_deta = float(np.sum(dn_deta * SPECIES_CHARGED_FRACTION))
-    expected_in_window = float(dn_deta.sum() * 2.0 * args.eta_window)
-    if args.particles > 0:
-        particle_count = args.particles
-    else:
-        particle_count = max(1, int(rng.poisson(expected_in_window)))
-    particle_count = min(particle_count, int(np.count_nonzero(importance > 0.0)))
-    selected = rng.choice(candidate_count, size=particle_count, replace=False, p=selection_probability)
+    dn_dy_primaries = pool_scale * float(importance.sum())
+    expected_in_window = dn_dy_primaries * 2.0 * args.eta_window
 
-    selected_px = momentum_x[selected]
-    selected_py = momentum_y[selected]
-    candidate_pt = np.sqrt(momentum_x * momentum_x + momentum_y * momentum_y)
-    candidate_phi = np.arctan2(momentum_y, momentum_x)
-    observable_weight = importance / importance.sum()
+    four_momentum = np.column_stack((lab_energy, lab_momentum))  # (E, pz, px, py)
+    if decays:
+        final_state, final_momentum, origin = decay_all(candidate_state, four_momentum, rng)
+    else:
+        final_state, final_momentum, origin = candidate_state, four_momentum, np.arange(candidate_count)
+    hadron = ~is_photon[final_state]
+    final_state, final_momentum, origin = final_state[hadron], final_momentum[hadron], origin[hadron]
+    weight = importance[origin]
+    px, py = final_momentum[:, 2], final_momentum[:, 3]
+    pt = np.hypot(px, py)
+    mt = np.sqrt(pt * pt + state_mass[final_state] ** 2)
+    phi = np.arctan2(py, px)
+    charged = state_charge[final_state] != 0
+    final_class = state_class[final_state]
+    charged_weight = weight * charged
+    norm = max(float(charged_weight.sum()), 1.0e-300)
+
+    dn_dy = np.asarray([pool_scale * float(weight[final_class == k].sum()) for k in range(len(CLASS_NAMES))])
+    mean_pt_identified = np.asarray([
+        float(np.sum((charged_weight * pt)[final_class == k]) / max(float(charged_weight[final_class == k].sum()), 1.0e-300))
+        for k in range(len(CLASS_NAMES))
+    ])
+
+    if args.particles > 0:
+        primary_count = args.particles
+    else:
+        primary_count = max(1, int(rng.poisson(expected_in_window)))
+    primary_count = min(primary_count, int(np.count_nonzero(importance > 0.0)))
+    selected = rng.choice(candidate_count, size=primary_count, replace=False, p=importance / importance.sum())
+    shown = np.isin(origin, selected)
+    source = origin[shown]
     return ParticleResult(
-        species=species[selected].astype(np.int8),
-        mass=masses[selected].astype(np.float32),
-        tau=surface.tau[cell[selected]].astype(np.float32),
-        eta_s=eta_s[selected].astype(np.float32),
-        x=surface.x[cell[selected]].astype(np.float32),
-        y=surface.y[cell[selected]].astype(np.float32),
-        energy=lab_energy[selected].astype(np.float32),
-        momentum_longitudinal=momentum_longitudinal[selected].astype(np.float32),
-        momentum_x=selected_px.astype(np.float32),
-        momentum_y=selected_py.astype(np.float32),
-        cooper_frye_weight=importance[selected].astype(np.float32),
-        mean_pt=float(np.sum(observable_weight * candidate_pt)),
+        species=final_class[shown].astype(np.int8),
+        hadron_id=final_state[shown].astype(np.int16),
+        parent_id=candidate_state[source].astype(np.int16),
+        charge=state_charge[final_state[shown]].astype(np.int8),
+        mass=state_mass[final_state[shown]].astype(np.float32),
+        tau=surface.tau[cell[source]].astype(np.float32),
+        eta_s=eta_s[source].astype(np.float32),
+        x=surface.x[cell[source]].astype(np.float32),
+        y=surface.y[cell[source]].astype(np.float32),
+        energy=final_momentum[shown, 0].astype(np.float32),
+        momentum_longitudinal=final_momentum[shown, 1].astype(np.float32),
+        momentum_x=px[shown].astype(np.float32),
+        momentum_y=py[shown].astype(np.float32),
+        cooper_frye_weight=weight[shown].astype(np.float32),
+        primaries=int(primary_count),
+        mean_pt=float(np.sum(charged_weight * pt) / norm),
         # The impact parameter is along +y in this event geometry.
-        v2=float(np.sum(observable_weight * np.cos(2.0 * (candidate_phi - 0.5 * math.pi)))),
-        v3=float(np.sum(observable_weight * np.cos(3.0 * candidate_phi))),
-        dn_deta=dn_deta,
-        dnch_deta=dnch_deta,
+        v2=float(np.sum(charged_weight * np.cos(2.0 * (phi - 0.5 * math.pi))) / norm),
+        v3=float(np.sum(charged_weight * np.cos(3.0 * phi)) / norm),
+        dn_dy=dn_dy,
+        mean_pt_identified=mean_pt_identified,
+        dnch_dy=pool_scale * float(charged_weight.sum()),
+        # dN/deta = dN/dy * dy/deta, with dy/deta = pT/mT at midrapidity.
+        dnch_deta=pool_scale * float(np.sum(charged_weight * pt / mt)),
+        dn_dy_primaries=dn_dy_primaries,
         expected_in_window=expected_in_window,
     )
+
+
+def eos_entropy_at_tsw(args: argparse.Namespace, eos: EquationOfState) -> float:
+    table_temperature = np.asarray(eos.table_temperature)
+    e_sw = float(np.interp(args.freezeout_temperature, table_temperature, np.asarray(eos.table_energy)))
+    p_sw = float(np.interp(args.freezeout_temperature, table_temperature, np.asarray(eos.table_pressure)))
+    return (e_sw + p_sw) / args.freezeout_temperature
 
 
 def entropy_closure(
@@ -857,10 +890,7 @@ def entropy_closure(
     gamma0 = 1.0 / np.sqrt(1.0 - hydro.velocity_x[0].astype(np.float64) ** 2 - hydro.velocity_y[0].astype(np.float64) ** 2)
     initial = float(np.sum(args.tau0 * entropy * gamma0) * dx * dx)
 
-    table_temperature = np.asarray(eos.table_temperature)
-    e_sw = float(np.interp(args.freezeout_temperature, table_temperature, np.asarray(eos.table_energy)))
-    p_sw = float(np.interp(args.freezeout_temperature, table_temperature, np.asarray(eos.table_pressure)))
-    s_sw = (e_sw + p_sw) / args.freezeout_temperature
+    s_sw = eos_entropy_at_tsw(args, eos)
     vx = surface.velocity_x.astype(np.float64)
     vy = surface.velocity_y.astype(np.float64)
     gamma = 1.0 / np.sqrt(1.0 - vx * vx - vy * vy)
@@ -876,6 +906,7 @@ def physics_audit(
     surface: SurfaceResult,
     particles: ParticleResult,
     entropy: tuple[float, float],
+    eos: EquationOfState,
 ) -> dict[str, object]:
     initial_entropy, surface_entropy = entropy
     entropy_ratio = surface_entropy / max(initial_entropy, 1.0e-12)
@@ -920,7 +951,7 @@ def physics_audit(
             and float(np.min(hydro.energy_density)) >= 0.0
             and float(np.max(hydro.max_velocity)) < 1.0
             and surface.tau.size >= 100
-            and (args.particles <= 0 or particles.species.size == args.particles)
+            and (args.particles <= 0 or particles.primaries == args.particles)
             and abs(entropy_ratio - 1.0) < 0.05
             and float(np.min(particles.cooper_frye_weight)) >= 0.0
             and temperature_rises <= 1
@@ -959,15 +990,23 @@ def physics_audit(
         "max_temperature_rise_count": temperature_rises,
         "freezeout_cells": int(surface.tau.size),
         "freezeout_heating_elements": int(np.count_nonzero(surface.heating)),
+        "sampled_primaries": particles.primaries,
         "sampled_particles": int(particles.species.size),
         "entropy_at_tau0_above_tsw": initial_entropy,
         "entropy_flux_through_freezeout": surface_entropy,
         "entropy_flux_ratio": entropy_ratio,
-        "dn_deta_direct_pion": float(particles.dn_deta[0]),
-        "dn_deta_direct_kaon": float(particles.dn_deta[1]),
-        "dn_deta_direct_proton": float(particles.dn_deta[2]),
-        "dnch_deta_direct": particles.dnch_deta,
-        "expected_particles_in_eta_window": particles.expected_in_window,
+        "dn_dy_pion": float(particles.dn_dy[0]),
+        "dn_dy_kaon": float(particles.dn_dy[1]),
+        "dn_dy_baryon": float(particles.dn_dy[2]),
+        "dn_dy_primaries": particles.dn_dy_primaries,
+        "dnch_dy": particles.dnch_dy,
+        "dnch_deta": particles.dnch_deta,
+        "entropy_per_charged_hadron": surface_entropy / max(particles.dnch_deta, 1.0e-12),
+        "hrg_to_eos_entropy_ratio_at_tsw": hrg_thermodynamics(args.freezeout_temperature)["s"] / eos_entropy_at_tsw(args, eos),
+        "mean_pt_charged_pion_gev": float(particles.mean_pt_identified[0]),
+        "mean_pt_charged_kaon_gev": float(particles.mean_pt_identified[1]),
+        "mean_pt_proton_antiproton_gev": float(particles.mean_pt_identified[2]),
+        "expected_primaries_in_eta_window": particles.expected_in_window,
         "mean_pt_gev": particles.mean_pt,
         "v2_reaction_plane": particles.v2,
         "v3_reaction_plane": particles.v3,
@@ -989,12 +1028,14 @@ def save_event_cache(
     args.output.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         args.output,
-        format_version=np.asarray("hic_blender_event_v4"),
+        format_version=np.asarray("hic_blender_event_v5"),
         physics_model=np.asarray(
             "MC-Glauber + transverse collisionless pre-equilibrium + Landau matching + "
             "boost-invariant 2+1D ideal relativistic hydrodynamics + Cooper-Frye"
         ),
-        afterburner=np.asarray("none; sampled hadrons free-stream after particlization"),
+        afterburner=np.asarray(
+            "resonance decays at the parent's freeze-out point; no hadronic rescattering, final hadrons free-stream"
+        ),
         device=np.asarray(str(device)),
         beam_system=np.asarray("Au+Au"),
         sqrt_snn_gev=np.asarray(args.sqrt_snn, dtype=np.float32),
@@ -1045,6 +1086,10 @@ def save_event_cache(
         surface_heating=surface.heating.astype(np.uint8),
         particle_species_names=SPECIES_NAMES,
         particle_species=particles.species,
+        hadron_names=np.asarray([h.name for h in hadron_table()[0]]),
+        particle_hadron_id=particles.hadron_id,
+        particle_parent_id=particles.parent_id,
+        particle_charge=particles.charge,
         particle_mass=particles.mass,
         particle_tau=particles.tau,
         particle_eta_s=particles.eta_s,
@@ -1095,7 +1140,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--particles",
         type=int,
         default=900,
-        help="Number of displayed hadrons; 0 draws Poisson(<N>) from the Cooper-Frye multiplicity in |eta_s| < eta-window.",
+        help="Number of displayed hadrons drawn at the freeze-out surface (before decays); 0 draws Poisson(<N>) "
+        "from the Cooper-Frye multiplicity in |eta_s| < eta-window.",
+    )
+    parser.add_argument("--no-decays", action="store_true", help="Keep resonances undecayed (diagnostics).")
+    parser.add_argument(
+        "--candidate-pool",
+        type=int,
+        default=None,
+        help="Size of the importance-weighted Cooper-Frye pool used for observables (default: 32x particles, "
+        "at least 12000; 40000 with --particles 0).",
     )
     parser.add_argument("--energy-floor", type=float, default=1.0e-8)
     parser.add_argument("--cpu", action="store_true")
@@ -1154,7 +1208,7 @@ def simulate(args: argparse.Namespace, verbose: bool = True) -> EventResult:
     surface = build_freezeout_surface(hydro, axis, dx)
     particles = sample_cooper_frye_particles(args, surface, rng)
     entropy = entropy_closure(args, eos, hydro, surface, dx)
-    audit = physics_audit(args, geometry, preequilibrium, hydro, surface, particles, entropy)
+    audit = physics_audit(args, geometry, preequilibrium, hydro, surface, particles, entropy, eos)
     return EventResult(device, axis, geometry, preequilibrium, hydro, surface, particles, audit)
 
 
@@ -1166,9 +1220,9 @@ def main() -> None:
         args, result.device, result.geometry, result.preequilibrium, result.hydro, surface, particles, result.axis, audit
     )
     print(
-        f"Particlization: cells={surface.tau.size}, particles={particles.species.size}, "
+        f"Particlization: elements={surface.tau.size}, primaries={particles.primaries}, final hadrons={particles.species.size}, "
         f"mean pT={particles.mean_pt:.3f} GeV, v2={particles.v2:.4f}, "
-        f"dNch/deta(direct)={particles.dnch_deta:.1f}, entropy ratio={audit['entropy_flux_ratio']:.3f}"
+        f"dNch/deta={particles.dnch_deta:.1f}, entropy ratio={audit['entropy_flux_ratio']:.3f}"
     )
     if not audit["passed"]:
         raise SystemExit("Physics audit failed. Inspect the generated audit JSON.")

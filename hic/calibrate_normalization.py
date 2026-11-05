@@ -9,15 +9,14 @@ matches a target:
                            within the audit tolerance, but unlike that flux it is a smooth,
                            deterministic function of the normalization. It does not depend on which
                            hadron species are sampled; compare with dS/dy estimated from data.
-* ``dnch_deta_direct``  -- charged dN/deta_s of the *directly* sampled pi/K/p. The model has no
-                           resonance decays, so this is well below a measured dN_ch/deta for the
-                           same entropy; calibrating it to data overestimates the initial entropy.
-                           It is a Monte Carlo estimate (relative noise ~0.5%).
+* ``dnch_deta``         -- charged-hadron pseudorapidity density at midrapidity after resonance
+                           decays (weak decays not performed), comparable with a measured
+                           dN_ch/deta. It is a Monte Carlo estimate (relative noise ~0.5-1%).
 
 The target must be supplied explicitly. Tune in one centrality class and keep the others as
 predictions. Usage:
 
-    python -m hic.calibrate_normalization --observable entropy --target 4800 \\
+    python -m hic.calibrate_normalization --observable dnch_deta --target <measured dNch/deta> \\
         --impact-parameter 2.2 --seeds 1 2 3 --output outputs/calibration.json
 """
 import argparse
@@ -31,7 +30,7 @@ from hic import blender_event_pipeline as pipeline
 
 OBSERVABLES = {
     "entropy": "entropy_at_tau0_above_tsw",
-    "dnch_deta_direct": "dnch_deta_direct",
+    "dnch_deta": "dnch_deta",
 }
 
 
@@ -56,7 +55,11 @@ def calibrate(
     max_iterations: int = 8,
     max_peak: float | None = None,
 ) -> dict[str, object]:
-    """Secant iteration in log(observable) vs log(peak energy); the observable is close to a power law."""
+    """Iterate on a power law value ~ A peak^b fitted (least squares in log-log) to every evaluation.
+
+    Fitting all points instead of the last two (secant) keeps Monte Carlo noise in the observable from
+    being amplified near the solution.
+    """
     history: list[tuple[float, float]] = []
     peak = initial_peak
     exponent = 0.75  # entropy ~ e^(3/4) for a nearly conformal fluid; refined from the history
@@ -66,11 +69,14 @@ def calibrate(
         print(f"  peak energy {peak:9.4f} GeV/fm^3 -> {observable} = {value:.4g} (target {target:.4g})", flush=True)
         if abs(value / target - 1.0) <= tolerance:
             break
-        if len(history) >= 2:
-            (p0, v0), (p1, v1) = history[-2], history[-1]
-            if p0 != p1 and v0 > 0 and v1 > 0 and v0 != v1:
-                exponent = math.log(v1 / v0) / math.log(p1 / p0)
-        peak = peak * (target / value) ** (1.0 / max(exponent, 0.1))
+        log_peak = np.log([p for p, _ in history])
+        log_value = np.log([v for _, v in history])
+        if len(history) >= 2 and np.ptp(log_peak) > 1.0e-6:
+            exponent, intercept = np.polyfit(log_peak, log_value, 1)
+            exponent = max(float(exponent), 0.1)
+            peak = math.exp((math.log(target) - intercept) / exponent)
+        else:
+            peak = peak * (target / value) ** (1.0 / exponent)
         if max_peak is not None:
             peak = min(peak, max_peak)
     else:
@@ -95,12 +101,19 @@ def main() -> None:
     parser.add_argument("--grid-size", type=int, default=150)
     parser.add_argument("--extent", type=float, default=15.0, help="Transverse half-width (fm); central events need room.")
     parser.add_argument("--initial-peak", type=float, default=6.0)
+    parser.add_argument("--candidate-pool", type=int, default=160000, help="Cooper-Frye pool size (Monte Carlo noise).")
     parser.add_argument("--tolerance", type=float, default=0.01)
     parser.add_argument("--cpu", action="store_true")
     parser.add_argument("--output", type=Path, default=Path("outputs/calibration.json"))
     args = parser.parse_args()
 
-    base = ["--impact-parameter", str(args.impact_parameter), "--grid-size", str(args.grid_size), "--extent", str(args.extent), "--particles", "0"]
+    base = [
+        "--impact-parameter", str(args.impact_parameter),
+        "--grid-size", str(args.grid_size),
+        "--extent", str(args.extent),
+        "--particles", "0",
+        "--candidate-pool", str(args.candidate_pool),
+    ]
     if args.cpu:
         base.append("--cpu")
     max_peak = pipeline.read_eos_table(pipeline.parse_args([]).eos_table)[0][-1]

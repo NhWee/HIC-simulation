@@ -8,6 +8,7 @@ import pytest
 import torch
 
 import hic.blender_event_pipeline as pipeline
+from hic import hadrons
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EOS_TABLE = REPO_ROOT / "data" / "eos_table.csv"
@@ -111,12 +112,15 @@ def quadrature_pion_v2(surface, temperature: float) -> float:
     return numerator / denominator
 
 
-def test_cooper_frye_sampler_agrees_with_direct_quadrature(event_24, monkeypatch):
+def test_cooper_frye_sampler_agrees_with_direct_quadrature(event_24):
     args, _, surface, _ = event_24
     expected = quadrature_pion_v2(surface, args.freezeout_temperature)
-    monkeypatch.setattr(pipeline, "SPECIES_DEGENERACIES", np.asarray((3.0, 1.0e-12, 1.0e-12)))
+    states, index = hadrons.hadron_table()
+    pions = np.asarray([index["pi+"], index["pi-"]])
     rng = np.random.default_rng(5)
-    samples = np.array([pipeline.sample_cooper_frye_particles(args, surface, rng).v2 for _ in range(6)])
+    samples = np.array([
+        pipeline.sample_cooper_frye_particles(args, surface, rng, species=pions, decays=False).v2 for _ in range(6)
+    ])
     error = samples.std(ddof=1) / math.sqrt(samples.size)
     assert expected > 0.01  # a real in-plane signal, not noise
     assert abs(samples.mean() - expected) < 4.0 * error + 0.003
@@ -129,8 +133,19 @@ def test_auto_particle_count_follows_cooper_frye_multiplicity(event_24, monkeypa
     rng = np.random.default_rng(11)
     for _ in range(5):
         particles = pipeline.sample_cooper_frye_particles(args, surface, rng)
-        counts.append(particles.species.size)
+        counts.append(particles.primaries)
         expected.append(particles.expected_in_window)
+        assert particles.species.size >= particles.primaries  # decay products are added
     mean_expected = float(np.mean(expected))
     assert np.std(expected) < 0.05 * mean_expected  # the Monte Carlo integral is stable
     assert abs(np.mean(counts) - mean_expected) < 4.0 * math.sqrt(mean_expected / len(counts)) + 1.0
+
+
+def test_resonance_decays_raise_multiplicity_and_order_mean_pt_by_mass(event_24):
+    args, _, surface, _ = event_24
+    with_decays = pipeline.sample_cooper_frye_particles(args, surface, np.random.default_rng(2))
+    without = pipeline.sample_cooper_frye_particles(args, surface, np.random.default_rng(2), decays=False)
+    assert with_decays.dnch_deta > 1.3 * without.dnch_deta  # feed-down from rho, omega, K*, Delta, ...
+    pion, kaon, proton = with_decays.mean_pt_identified
+    assert pion < kaon < proton
+    assert with_decays.dnch_deta < with_decays.dnch_dy  # pseudorapidity Jacobian pT/mT < 1

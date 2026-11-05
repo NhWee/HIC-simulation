@@ -34,10 +34,6 @@
       "value": 9,
       "exact": true
     },
-    "sampled_particles": {
-      "value": 900,
-      "exact": true
-    },
     "preequilibrium_tau_start_fm_c": {
       "value": 0.10000000149011612,
       "rel": 1e-06
@@ -98,20 +94,52 @@
       "value": 0.9764493227388862,
       "abs": 0.01
     },
-    "dnch_deta_direct": {
-      "value": 36.47785357612548,
+    "dnch_deta": {
+      "value": 64.3164866987937,
       "rel": 0.03
     },
+    "dn_dy_pion": {
+      "value": 98.42807159708757,
+      "rel": 0.03
+    },
+    "dn_dy_kaon": {
+      "value": 23.224001139505287,
+      "rel": 0.04
+    },
+    "dn_dy_baryon": {
+      "value": 9.710225700757459,
+      "rel": 0.06
+    },
+    "hrg_to_eos_entropy_ratio_at_tsw": {
+      "value": 0.8850032161576908,
+      "rel": 1e-06
+    },
+    "mean_pt_charged_pion_gev": {
+      "value": 0.40273323666933714,
+      "rel": 0.02
+    },
+    "mean_pt_charged_kaon_gev": {
+      "value": 0.5379273256107792,
+      "rel": 0.03
+    },
+    "mean_pt_proton_antiproton_gev": {
+      "value": 0.7320058999463052,
+      "rel": 0.04
+    },
+    "sampled_primaries": {
+      "value": 900,
+      "exact": true
+    },
     "mean_pt_gev": {
-      "value": 0.4795040123572082,
+      "value": 0.44201176755991356,
       "rel": 0.02
     },
     "v2_reaction_plane": {
-      "value": 0.014146554822746734,
+      "value": 0.014538275132390161,
       "abs": 0.004
     },
     "v3_reaction_plane": {
-      "value": 0.00285787642860903,
+      "value": 0.009031918609573454,
       "abs": 0.004
     }
   }

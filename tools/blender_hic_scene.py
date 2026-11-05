@@ -880,7 +880,7 @@ def build_scene(cache_path: Path, field_stride: int) -> tuple[bpy.types.Scene, n
     if not cache_path.exists():
         raise FileNotFoundError(f"Physics event cache not found: {cache_path}")
     cache = np.load(cache_path, allow_pickle=False)
-    if str(cache["format_version"]) != "hic_blender_event_v4":
+    if str(cache["format_version"]) != "hic_blender_event_v5":
         raise RuntimeError(f"Unsupported cache format: {cache['format_version']}")
 
     clear_scene()

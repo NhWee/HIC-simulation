@@ -107,7 +107,7 @@ same values, with per-observable tolerances, are stored in
 `tests/reference/blender_event_audit.json` and checked by `python -m pytest`
 (CPU). The values reflect the exact Milne source terms (ROADMAP P0-3), the
 HotQCD lattice equation of state (P0-1) and the isotherm-crossing freeze-out
-surface (P0-4). The sampled v2 has a single-sample
+surface (P0-4), and the hadron resonance gas with decays (P2-2). The sampled v2 has a single-sample
 Monte Carlo spread of about 0.004.
 
 ```text
@@ -118,15 +118,17 @@ initial max Landau effective temperature   0.40068 GeV
 handoff max effective temperature          0.25363 GeV
 energy-weighted handoff pre-flow            0.14869 c
 Landau eigen-equation residual              3.54e-7
-handoff temperature L-infinity error        2.68e-6 GeV
+handoff temperature L-infinity error        2.38e-07 GeV (T >= Tsw medium)
 QGP-core cells at hydrodynamization         3594
 freeze-out surface elements                 4667 (93 heating)
-sampled particles                           900
-mean pT                                     0.4795 GeV
-v2 relative to the reaction plane           0.0141
+hadrons drawn at the surface               900 (1298 after decays)
+mean pT, charged, after decays              0.4420 GeV
+mean pT of charged pi / K / p                0.403 / 0.538 / 0.732 GeV
+v2 relative to the reaction plane           0.0145
 entropy above Tsw at tau0 (per unit eta)    704.7
 entropy flux / initial entropy              0.976
-direct charged dN/deta (pi, K, p)           36.5
+charged dN/deta after resonance decays      64.3
+HRG / lattice entropy density at Tsw        0.885
 ```
 
 The integer Glauber geometry should be stable for the fixed NumPy seed. Small
@@ -163,7 +165,7 @@ The pre-equilibrium stage is a transverse collisionless approximation rather
 than IP-Glasma or KoMPoST. Hydrodynamics is ideal and boost invariant rather
 than event-by-event 3+1D second-order viscous hydrodynamics. The equation of state is
 the HotQCD lattice parametrization at zero baryon density (extrapolated toward
-the Stefan-Boltzmann limit above 400 MeV), and sampled hadrons free-stream without
-resonance decays or a hadronic transport afterburner. The output is suitable
+the Stefan-Boltzmann limit above 400 MeV), and the sampled hadron resonance gas decays
+into final hadrons that free-stream without a hadronic transport afterburner. The output is suitable
 for numerical development and education, not precision extraction of QCD
 transport coefficients.
