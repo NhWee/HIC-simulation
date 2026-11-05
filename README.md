@@ -177,6 +177,25 @@ The Blender event generator also writes
 `outputs\blender_physics_event.audit.json` and exits unsuccessfully if its
 causality, monotonicity, Landau-handoff, freeze-out, or particle checks fail.
 
+### Automated tests
+
+The `pytest` suite runs on CPU on Linux and Windows (GitHub Actions,
+`.github/workflows/tests.yml`) and takes about half a minute:
+
+```powershell
+python -m pip install -r requirements-cpu.txt -r requirements-test.txt
+python -m pytest
+```
+
+It covers the validation tools above, Glauber geometry sanity checks, and an
+end-to-end run of the reference event compared against
+`tests/reference/blender_event_audit.json` with per-observable tolerances.
+After an intentional physics change, regenerate that file with
+`python -m tests.reference_event` and commit it with the change.
+`tests/test_known_issues.py` holds strict `xfail` checks for the defects listed
+in [docs/ROADMAP.md](docs/ROADMAP.md); a fix turns them into XPASS failures, and
+the marker is removed together with the fix.
+
 ## Other entry points
 
 | Command | Purpose |

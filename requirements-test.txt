@@ -1,0 +1,5 @@
+# Test dependencies. Install together with requirements-cpu.txt (or requirements-cuda.txt):
+#   python -m pip install -r requirements-cpu.txt -r requirements-test.txt
+numpy==2.4.4
+plotly==6.8.0
+pytest==9.2.0

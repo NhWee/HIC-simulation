@@ -121,7 +121,7 @@ Gubser 해에 대해 수렴 차수(≈2)를 측정해 `hydro_convergence`에 기
 
 | 단계 | 작업 | 완료 기준 |
 | --- | --- | --- |
-| 1 | pytest + CI 골격, 현재 동작을 기준값으로 고정 | CI 녹색. 이후 변경의 효과를 숫자로 볼 수 있음 |
+| 1 ✅ | pytest + CI 골격, 현재 동작을 기준값으로 고정 | CI 녹색. 이후 변경의 효과를 숫자로 볼 수 있음 (아래 "1단계 결과") |
 | 2 | P0-3 Milne 소스 + Gubser 검증 | Gubser 해와 L∞ 상대오차 < 1% (격자 160) |
 | 3 | P0-1 격자 QCD EoS | 일관성 검사 통과, 표 범위 ≥ 100 GeV/fm³ |
 | 4 | P0-2 정규화 + P0-4 | 0–5% dN_ch/dη 재현, 입자 수가 Cooper-Frye 적분에서 결정 |
@@ -132,6 +132,21 @@ Gubser 해에 대해 수렴 차수(≈2)를 측정해 `hydro_convergence`에 기
 
 1–4단계가 끝나면 README의 기준값(온도, v₂, ⟨pT⟩)을 새로 생성하고, Blender 장면도 그
 캐시로 다시 렌더링해야 합니다.
+
+## 1단계 결과 (완료)
+
+- `python -m pytest`: 16 passed, 4 xfailed, CPU 약 25초. CI는 `.github/workflows/tests.yml`에서
+  Ubuntu(Python 3.11/3.13)와 Windows(Python 3.13)로 돌립니다.
+- 기준 이벤트 회귀: `tests/reference/blender_event_audit.json`에 관측량별 허용오차와 함께
+  고정했습니다. CPU 값이 README의 CUDA 값과 일치합니다(QGP 셀 3524, 동결 셀 4039,
+  ⟨pT⟩ 0.4491, v₂ 0.0119). binary fraction을 0.14에서 0.16으로 바꾸는 뮤테이션을 4개 항목에서 검출했습니다.
+- 알려진 버그 고정(`tests/test_known_issues.py`, `xfail(strict=True, raises=AssertionError)`):
+  - P0-3 Bjorken 소스: τ·T^τx 보존 시험. 현재 0.794배로, 2^(−1/3)과 같아 (1+c_s²) 초과 감쇠를 확인했습니다.
+  - P0-1 EoS: c_s² ≠ dp/de(최대 18%), dp/dT ≠ s(최대 45%), 표 범위가 6 GeV/fm³까지뿐임.
+- 이 과정에서 발견해 고친 버그: `hydro_convergence`가 `crossover_bjorken_tolerance`를
+  전달하지 않아 README의 `run_hydro_convergence.ps1` 명령이 `AttributeError`로 죽었습니다.
+- 남은 공백: shock tube에 해석해(Riemann) 비교가 없어 에너지 보존만 검사합니다.
+  Blender 장면 빌더(`tools/blender_hic_scene.py`)와 GUI 앱은 bpy/Qt가 필요해 테스트 대상에서 뺐습니다.
 
 ## 진단 재현 메모
 
