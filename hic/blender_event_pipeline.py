@@ -963,8 +963,11 @@ def main() -> None:
     args = parse_args()
     if not 0.0 <= args.impact_parameter <= 2.0 * args.radius + 2.0:
         raise SystemExit("impact parameter is outside the supported Au+Au geometry")
-    if args.initial_peak_energy > 6.0:
-        raise SystemExit("initial peak energy exceeds the supplied EoS table range (6 GeV/fm^3)")
+    table_max_energy = read_eos_table(args.eos_table)[0][-1]
+    if args.initial_peak_energy > table_max_energy:
+        raise SystemExit(
+            f"initial peak energy exceeds the supplied EoS table range ({table_max_energy:g} GeV/fm^3)"
+        )
     if not 0.0 < args.tau_initial < args.tau0:
         raise SystemExit("tau-initial must be positive and smaller than tau0")
     if args.preeq_snapshots < 2 or args.preeq_angles < 8:

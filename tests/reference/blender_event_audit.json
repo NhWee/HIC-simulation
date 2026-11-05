@@ -47,11 +47,11 @@
       "rel": 1e-06
     },
     "initial_max_landau_effective_temperature_gev": {
-      "value": 0.6118433475494385,
+      "value": 0.4006776511669159,
       "rel": 0.001
     },
     "handoff_max_landau_effective_temperature_gev": {
-      "value": 0.3700000047683716,
+      "value": 0.253629595041275,
       "rel": 0.001
     },
     "max_preequilibrium_flow": {
@@ -63,39 +63,39 @@
       "rel": 0.001
     },
     "qgp_cells_at_hydrodynamization": {
-      "value": 3524,
+      "value": 3594,
       "rel": 0.01
     },
     "initial_max_temperature_gev": {
-      "value": 0.3700000047683716,
+      "value": 0.25362956523895264,
       "rel": 0.001
     },
     "final_max_temperature_gev": {
-      "value": 0.14474830031394958,
+      "value": 0.14493577182292938,
       "rel": 0.01
     },
     "max_transverse_velocity": {
-      "value": 0.8623961806297302,
+      "value": 0.9764009714126587,
       "rel": 0.01
     },
     "hydro_snapshots": {
-      "value": 52,
+      "value": 71,
       "rel": 0.03
     },
     "freezeout_cells": {
-      "value": 4039,
+      "value": 4481,
       "rel": 0.02
     },
     "mean_pt_gev": {
-      "value": 0.4663457126583453,
+      "value": 0.4738526710056734,
       "rel": 0.02
     },
     "v2_reaction_plane": {
-      "value": 0.01111126648239219,
+      "value": 0.007558927476079618,
       "abs": 0.004
     },
     "v3_reaction_plane": {
-      "value": 0.002155168760058744,
+      "value": 0.004456581322263737,
       "abs": 0.004
     }
   }

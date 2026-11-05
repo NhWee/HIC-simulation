@@ -31,17 +31,17 @@ Indicative values from the reference run (stored with tolerances in
 | --- | ---: |
 | Glauber geometry | `Npart=236`, `Ncoll=574` |
 | Pre-equilibrium interval | `0.1 -> 0.6 fm/c` |
-| Maximum Landau effective temperature | `612 -> 370 MeV` |
+| Maximum Landau effective temperature | `401 -> 254 MeV` |
 | Energy-weighted handoff pre-flow | `0.149 c` |
-| QGP-core cells at hydrodynamization | `3524` |
+| QGP-core cells at hydrodynamization | `3594` |
 | Sampled hadrons | `900` |
-| Mean transverse momentum | `0.466 GeV` |
-| Reaction-plane `v2` | `0.011` (Monte Carlo spread about 0.002) |
+| Mean transverse momentum | `0.474 GeV` |
+| Reaction-plane `v2` | `0.008` (single-sample Monte Carlo spread about 0.004) |
 
 These values are regression references rather than experimental predictions.
-The rendered images above predate the exact Milne source-term update described
-in [docs/ROADMAP.md](docs/ROADMAP.md) (P0-3), which raised the mean transverse
-momentum by about 4%; re-render them with `.\run_reproduce_blender.ps1`.
+The rendered images above predate the exact Milne source terms (P0-3) and the
+lattice-QCD equation of state (P0-1) described in [docs/ROADMAP.md](docs/ROADMAP.md);
+re-render them with `.\run_reproduce_blender.ps1`.
 The complete run writes a 13-second, 1280 x 720, 24 fps Blender animation and
 a machine-readable physics audit.
 
@@ -53,7 +53,8 @@ The reference Blender event uses:
 2. wounded-nucleon plus binary-collision energy deposition
 3. transverse collisionless free streaming from `tau=0.1` to `0.6 fm/c`
 4. transport of `T00`, `T0i`, and `Tij`, with timelike-eigenvector Landau matching
-5. a tabulated crossover equation of state
+5. the HotQCD (2+1)-flavor lattice-QCD equation of state, tabulated
+   thermodynamically consistently by `hic/lattice_eos.py`
 6. boost-invariant 2+1D ideal relativistic hydrodynamics
 7. a `Tsw=145 MeV` isothermal surface
 8. positive-contribution Cooper-Frye sampling of pion, kaon, and proton classes

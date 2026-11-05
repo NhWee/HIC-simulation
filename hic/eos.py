@@ -38,7 +38,16 @@ class EquationOfState:
         if self.kind == "conformal":
             return self.speed_of_sound2 * energy_density
         if self.kind == "table":
-            return self._interpolate_table(energy_density, self.table_pressure)
+            # Inside the table: linear interpolation. Below it, p = (p_0/e_0) e so that the pressure of
+            # dilute/vacuum cells goes to zero instead of staying at the first tabulated value (which
+            # would give p > e). Above it, continue with the last tabulated sound speed.
+            interpolated = self._interpolate_table(energy_density, self.table_pressure)
+            e_low, p_low = self.table_energy[0], self.table_pressure[0]
+            e_high, p_high = self.table_energy[-1], self.table_pressure[-1]
+            below = energy_density * (p_low / e_low)
+            above = p_high + self.table_sound_speed2[-1] * (energy_density - e_high)
+            result = torch.where(energy_density < e_low, below, interpolated)
+            return torch.where(energy_density > e_high, above, result)
 
         low_pressure = self.low_speed_of_sound2 * energy_density
         high_pressure = self.high_speed_of_sound2 * energy_density
@@ -49,7 +58,9 @@ class EquationOfState:
         if self.kind == "conformal":
             return torch.full_like(energy_density, self.speed_of_sound2)
         if self.kind == "table":
-            return self._interpolate_table(energy_density, self.table_sound_speed2)
+            interpolated = self._interpolate_table(energy_density, self.table_sound_speed2)
+            dilute = torch.full_like(energy_density, self.table_pressure[0] / self.table_energy[0])
+            return torch.where(energy_density < self.table_energy[0], dilute, interpolated)
 
         switch = torch.sigmoid((energy_density - self.transition_energy) / max(self.transition_width, 1.0e-8))
         return (1.0 - switch) * self.low_speed_of_sound2 + switch * self.high_speed_of_sound2
@@ -84,7 +95,12 @@ def add_eos_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--high-speed-of-sound2", type=float, default=1.0 / 3.0, help="High-density sound speed squared.")
     parser.add_argument("--transition-energy", type=float, default=1.0, help="Crossover midpoint energy density.")
     parser.add_argument("--transition-width", type=float, default=0.25, help="Crossover smoothness in energy density.")
-    parser.add_argument("--eos-table", type=Path, default=Path("data/eos_table.csv"), help="CSV table with energy_density, pressure, sound_speed2.")
+    parser.add_argument(
+        "--eos-table",
+        type=Path,
+        default=Path("data/eos_table.csv"),
+        help="CSV table with energy_density, pressure, sound_speed2 (and temperature); default is the HotQCD lattice EoS.",
+    )
 
 
 def read_eos_table(path: Path) -> tuple[tuple[float, ...], tuple[float, ...], tuple[float, ...], tuple[float, ...]]:

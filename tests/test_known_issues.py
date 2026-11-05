@@ -1,35 +1,46 @@
-"""Physics checks that the current code is known to FAIL (docs/ROADMAP.md, P0 items).
+"""Physics checks that the current code is known to FAIL (see docs/ROADMAP.md).
 
-They are marked ``xfail(strict=True, raises=AssertionError)``: the suite stays green while the bug exists, and turns red
-(XPASS) once a fix lands, so the marker has to be removed together with the fix. Any other exception is a real failure.
+Mark them ``xfail(strict=True, raises=AssertionError)``: the suite stays green while the defect
+exists and turns red (XPASS) once a fix lands, so the marker is removed together with the fix.
+Any other exception is a real failure.
+
+The EoS (P0-1) and Milne source-term (P0-3) checks that used to live here now pass and moved to
+tests/test_eos.py and tests/test_hydro_sources.py.
 """
+import sys
 from pathlib import Path
 
 import numpy as np
 import pytest
+import torch
 
-from hic.eos import read_eos_table
+import hic.blender_event_pipeline as pipeline
 
-EOS_TABLE = Path(__file__).resolve().parents[1] / "data" / "eos_table.csv"
-
-
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ROADMAP P0-1: EoS table sound_speed2 column is not dp/de")
-def test_eos_table_sound_speed_matches_pressure_slope():
-    energy, pressure, sound_speed2, _ = map(np.asarray, read_eos_table(EOS_TABLE))
-    slope = np.diff(pressure) / np.diff(energy)
-    midpoint_cs2 = 0.5 * (sound_speed2[1:] + sound_speed2[:-1])
-    np.testing.assert_allclose(midpoint_cs2, slope, rtol=0.05)
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ROADMAP P0-1: EoS table violates dp/dT = s = (e + p)/T")
-def test_eos_table_satisfies_thermodynamic_identity():
-    energy, pressure, _, temperature = map(np.asarray, read_eos_table(EOS_TABLE))
-    dp_dt = np.diff(pressure) / np.diff(temperature)
-    entropy = (energy + pressure) / temperature
-    np.testing.assert_allclose(dp_dt, 0.5 * (entropy[1:] + entropy[:-1]), rtol=0.10)
-
-
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason="ROADMAP P0-1/P0-2: EoS table stops at 6 GeV/fm^3")
-def test_eos_table_covers_rhic_initial_energy_densities():
-    energy, *_ = read_eos_table(EOS_TABLE)
-    assert max(energy) >= 50.0
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="ROADMAP P0-4: freeze-out ignores cells that first exceed T_sw after tau0",
+)
+def test_every_cell_that_was_hot_is_on_the_freezeout_surface(monkeypatch):
+    # With the lattice EoS the reference geometry at 24 GeV/fm^3 has ~10% of its hot cells heated
+    # only after tau0 (the expanding edge, which carries the strongest in-plane flow). The
+    # `initially_hot` mask in evolve_hydrodynamics drops them from the Cooper-Frye surface.
+    monkeypatch.setattr(
+        sys, "argv", ["x", "--cpu", "--grid-size", "60", "--initial-peak-energy", "24",
+                      "--eos-table", str(REPO_ROOT / "data" / "eos_table.csv")]
+    )
+    args = pipeline.parse_args()
+    torch.set_grad_enabled(False)
+    rng = np.random.default_rng(args.seed)
+    xx, yy, dx = pipeline.make_grid(args.grid_size, args.extent, torch.device("cpu"))
+    eos = pipeline.build_table_eos(args.eos_table)
+    geometry = pipeline.build_event_geometry(args, xx, yy, rng)
+    preequilibrium = pipeline.evolve_pre_equilibrium(args, geometry.source, eos)
+    hydro = pipeline.evolve_hydrodynamics(args, preequilibrium, eos, xx, yy, dx)
+    ever_hot = np.any(hydro.temperature >= args.freezeout_temperature, axis=0)
+    on_surface = np.isfinite(hydro.freezeout_tau)
+    missing = int(np.count_nonzero(ever_hot & ~on_surface))
+    assert missing == 0, f"{missing} of {int(ever_hot.sum())} hot cells are missing from the freeze-out surface"

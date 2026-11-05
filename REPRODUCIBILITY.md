@@ -105,23 +105,24 @@ The reference video is 1280 x 720, 24 fps, 312 frames, and 13 seconds long.
 For seed 17 and `b=5.7 fm`, the reference run produced the values below. The
 same values, with per-observable tolerances, are stored in
 `tests/reference/blender_event_audit.json` and checked by `python -m pytest`
-(CPU). The hydrodynamic and particle values reflect the exact Milne
-source terms introduced for ROADMAP item P0-3.
+(CPU). The values reflect the exact Milne source terms (ROADMAP P0-3) and the
+HotQCD lattice equation of state (P0-1). The sampled v2 has a single-sample
+Monte Carlo spread of about 0.004.
 
 ```text
 Npart                                      236
 Ncoll                                      574
 pre-equilibrium tau range                  0.1 -> 0.6 fm/c
-initial max Landau effective temperature   0.61184 GeV
-handoff max effective temperature          0.37000 GeV
+initial max Landau effective temperature   0.40068 GeV
+handoff max effective temperature          0.25363 GeV
 energy-weighted handoff pre-flow            0.14869 c
 Landau eigen-equation residual              3.54e-7
-handoff temperature L-infinity error        7.38e-7 GeV
-QGP-core cells at hydrodynamization         3524
-freeze-out cells                            4039
+handoff temperature L-infinity error        2.68e-6 GeV
+QGP-core cells at hydrodynamization         3594
+freeze-out cells                            4481
 sampled particles                           900
-mean pT                                     0.4663 GeV
-v2 relative to the reaction plane           0.0111
+mean pT                                     0.4739 GeV
+v2 relative to the reaction plane           0.0076
 ```
 
 The integer Glauber geometry should be stable for the fixed NumPy seed. Small
@@ -156,8 +157,9 @@ control; publish selected rendered media through a release when needed.
 
 The pre-equilibrium stage is a transverse collisionless approximation rather
 than IP-Glasma or KoMPoST. Hydrodynamics is ideal and boost invariant rather
-than event-by-event 3+1D second-order viscous hydrodynamics. The included EoS is
-a compact demonstration table, and sampled hadrons free-stream without
+than event-by-event 3+1D second-order viscous hydrodynamics. The equation of state is
+the HotQCD lattice parametrization at zero baryon density (extrapolated toward
+the Stefan-Boltzmann limit above 400 MeV), and sampled hadrons free-stream without
 resonance decays or a hadronic transport afterburner. The output is suitable
 for numerical development and education, not precision extraction of QCD
 transport coefficients.
