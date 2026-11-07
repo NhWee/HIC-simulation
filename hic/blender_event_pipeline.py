@@ -108,6 +108,10 @@ class ParticleResult:
     mean_pt: float
     v2: float
     v3: float
+    mean_pt_error: float
+    v2_error: float
+    v3_error: float
+    observable_candidates: int
 
 
 def sample_woods_saxon_3d(
@@ -667,6 +671,14 @@ def lorentz_boost(
     return lab_energy, lab_momentum
 
 
+def weighted_mean_and_error(values: np.ndarray, weights: np.ndarray) -> tuple[float, float]:
+    """Self-normalized importance-sampling estimate and its statistical error."""
+    normalized = weights / weights.sum()
+    mean = float(np.sum(normalized * values))
+    error = float(np.sqrt(np.sum(normalized * normalized * (values - mean) ** 2)))
+    return mean, error
+
+
 def sample_cooper_frye_particles(
     args: argparse.Namespace,
     surface: SurfaceResult,
@@ -676,9 +688,10 @@ def sample_cooper_frye_particles(
     envelope = np.maximum(envelope.astype(np.float64), 1.0e-14)
     surface_probability = envelope / envelope.sum()
     species_probability = thermal_species_probabilities(args.freezeout_temperature)
-    # The displayed particle set stays compact, while a larger importance-
-    # sampled pool stabilizes integrated pT and vn estimates.
-    candidate_count = max(args.particles * 32, 12000)
+    # The displayed particle set stays compact. Integrated pT and vn come from
+    # the whole importance-weighted pool; with ~3e4 candidates the v2 sampling
+    # error is comparable to v2 itself, so the default pool holds 1e6.
+    candidate_count = max(int(getattr(args, "observable_candidates", 1_000_000)), args.particles * 32, 12000)
 
     cell = rng.choice(surface.tau.size, size=candidate_count, replace=True, p=surface_probability)
     species = rng.choice(SPECIES_NAMES.size, size=candidate_count, replace=True, p=species_probability)
@@ -727,6 +740,10 @@ def sample_cooper_frye_particles(
     candidate_pt = np.sqrt(momentum_x * momentum_x + momentum_y * momentum_y)
     candidate_phi = np.arctan2(momentum_y, momentum_x)
     observable_weight = importance / importance.sum()
+    # The impact parameter is along +y in this event geometry.
+    mean_pt, mean_pt_error = weighted_mean_and_error(candidate_pt, observable_weight)
+    v2, v2_error = weighted_mean_and_error(np.cos(2.0 * (candidate_phi - 0.5 * math.pi)), observable_weight)
+    v3, v3_error = weighted_mean_and_error(np.cos(3.0 * candidate_phi), observable_weight)
     return ParticleResult(
         species=species[selected].astype(np.int8),
         mass=masses[selected].astype(np.float32),
@@ -739,10 +756,13 @@ def sample_cooper_frye_particles(
         momentum_x=selected_px.astype(np.float32),
         momentum_y=selected_py.astype(np.float32),
         cooper_frye_weight=importance[selected].astype(np.float32),
-        mean_pt=float(np.sum(observable_weight * candidate_pt)),
-        # The impact parameter is along +y in this event geometry.
-        v2=float(np.sum(observable_weight * np.cos(2.0 * (candidate_phi - 0.5 * math.pi)))),
-        v3=float(np.sum(observable_weight * np.cos(3.0 * candidate_phi))),
+        mean_pt=mean_pt,
+        v2=v2,
+        v3=v3,
+        mean_pt_error=mean_pt_error,
+        v2_error=v2_error,
+        v3_error=v3_error,
+        observable_candidates=int(candidate_count),
     )
 
 
@@ -829,9 +849,13 @@ def physics_audit(
         "max_temperature_rise_count": temperature_rises,
         "freezeout_cells": int(surface.tau.size),
         "sampled_particles": int(particles.species.size),
+        "observable_candidates": particles.observable_candidates,
         "mean_pt_gev": particles.mean_pt,
+        "mean_pt_stat_error_gev": particles.mean_pt_error,
         "v2_reaction_plane": particles.v2,
+        "v2_stat_error": particles.v2_error,
         "v3_reaction_plane": particles.v3,
+        "v3_stat_error": particles.v3_error,
     }
     return audit
 
@@ -918,6 +942,10 @@ def save_event_cache(
         mean_pt=np.asarray(particles.mean_pt, dtype=np.float32),
         v2=np.asarray(particles.v2, dtype=np.float32),
         v3=np.asarray(particles.v3, dtype=np.float32),
+        mean_pt_stat_error=np.asarray(particles.mean_pt_error, dtype=np.float32),
+        v2_stat_error=np.asarray(particles.v2_error, dtype=np.float32),
+        v3_stat_error=np.asarray(particles.v3_error, dtype=np.float32),
+        observable_candidates=np.asarray(particles.observable_candidates, dtype=np.int64),
     )
     audit_path = args.audit_output or args.output.with_suffix(".audit.json")
     audit_path.write_text(json.dumps(audit, indent=2), encoding="ascii")
@@ -951,7 +979,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cfl", type=float, default=0.24)
     parser.add_argument("--freezeout-temperature", type=float, default=0.145, help="GeV")
     parser.add_argument("--eta-window", type=float, default=0.8)
-    parser.add_argument("--particles", type=int, default=900)
+    parser.add_argument("--particles", type=int, default=900, help="Hadrons kept for display in the Blender scene.")
+    parser.add_argument(
+        "--observable-candidates",
+        type=int,
+        default=1_000_000,
+        help="Importance-sampled Cooper-Frye candidates used for mean pT and vn.",
+    )
     parser.add_argument("--energy-floor", type=float, default=1.0e-8)
     parser.add_argument("--cpu", action="store_true")
     return parser.parse_args(argv)
@@ -990,7 +1024,9 @@ def main(argv: list[str] | None = None) -> None:
     save_event_cache(args, device, geometry, preequilibrium, hydro, surface, particles, axis, audit)
     print(
         f"Particlization: cells={surface.tau.size}, particles={particles.species.size}, "
-        f"mean pT={particles.mean_pt:.3f} GeV, v2={particles.v2:.4f}"
+        f"mean pT={particles.mean_pt:.4f}+-{particles.mean_pt_error:.4f} GeV, "
+        f"v2={particles.v2:.4f}+-{particles.v2_error:.4f} "
+        f"({particles.observable_candidates} candidates)"
     )
     if not audit["passed"]:
         raise SystemExit("Physics audit failed. Inspect the generated audit JSON.")
