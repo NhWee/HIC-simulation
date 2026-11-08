@@ -274,8 +274,6 @@ def simulate_frames(args: argparse.Namespace) -> dict[str, object]:
         crossing_progress = min(max(step / max(args.crossing_step * 2, 1), 0.0), 1.0)
         center_a_x = torch.tensor(-start + 2.0 * start * crossing_progress, device=device)
         center_b_x = torch.tensor(start - 2.0 * start * crossing_progress, device=device)
-        center_a_y = torch.tensor(-0.5 * args.impact_parameter, device=device)
-        center_b_y = torch.tensor(0.5 * args.impact_parameter, device=device)
         overlap = math.exp(-((float(center_a_x - center_b_x)) ** 2) / (2.0 * args.collision_width * args.collision_width))
 
         source_pulse = math.exp(-((t_lab - 0.12) ** 2) / (2.0 * args.source_duration * args.source_duration))
@@ -971,7 +969,7 @@ requestAnimationFrame(tick);
 </html>"""
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a GPU-accelerated staged heavy-ion collision visual simulation.")
     parser.add_argument("--device", choices=("auto", "cuda", "cpu"), default="auto", help="Simulation device.")
     parser.add_argument("--grid-size", type=int, default=224, help="GPU hydrodynamic grid resolution.")
@@ -1013,11 +1011,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=17, help="Random seed.")
     parser.add_argument("--frame-duration-ms", type=int, default=46, help="Browser animation frame duration.")
     parser.add_argument("--output", type=Path, default=Path("outputs/visual_simulation.html"), help="Output HTML file.")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     if args.output_grid_size > args.grid_size:
         raise SystemExit("--output-grid-size must be <= --grid-size")
     payload = simulate_frames(args)

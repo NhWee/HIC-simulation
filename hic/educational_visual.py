@@ -647,15 +647,15 @@ requestAnimationFrame(tickSimulation);
 </html>"""
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build an educational heavy-ion collision visual board.")
     parser.add_argument("--simulation", type=Path, default=Path("outputs/visual_simulation.html"), help="Optional visual simulation HTML to summarize.")
     parser.add_argument("--output", type=Path, default=Path("outputs/hic_educational_visual.html"), help="Output educational HTML.")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     summary = read_visual_simulation_summary(args.simulation)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(build_html(summary), encoding="utf-8")

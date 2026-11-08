@@ -421,7 +421,7 @@ def run_hydro(args: argparse.Namespace) -> tuple[list[dict[str, float]], list[di
     return rows, freezeout_rows
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a conservative 2+1D ideal hydrodynamics prototype.")
     parser.add_argument("--grid-size", type=int, default=120, help="2D transverse grid size.")
     parser.add_argument("--extent", type=float, default=12.0, help="Half-width of the transverse plane in fm-like units.")
@@ -456,11 +456,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--freezeout-energy", type=float, default=0.35, help="Energy-density threshold for freeze-out candidates.")
     parser.add_argument("--freezeout-temperature", type=float, default=0.145, help="Fallback freeze-out temperature for non-tabulated EoS.")
     parser.add_argument("--freezeout-output", type=Path, default=None, help="Optional output CSV for freeze-out candidate cells.")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     rows, freezeout_rows = run_hydro(args)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [

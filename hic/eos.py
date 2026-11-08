@@ -204,7 +204,9 @@ def _max_sound_speed2(eos: EquationOfState) -> float:
     upper = max(eos.transition_energy, 0.0) + 60.0 * width
     probe = torch.linspace(0.0, upper, 200_001, dtype=torch.float64)
     sampled = float(torch.max(eos.sound_speed2(probe)))
-    return max(sampled, eos.low_speed_of_sound2, eos.high_speed_of_sound2)
+    # Grid sampling slightly underestimates a smooth maximum; the signal speed
+    # must be an upper bound, so keep a small relative margin.
+    return max(sampled * (1.0 + 1.0e-6), eos.low_speed_of_sound2, eos.high_speed_of_sound2)
 
 
 @dataclass(frozen=True)
