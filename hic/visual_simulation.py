@@ -1,7 +1,6 @@
 import argparse
 import json
 import math
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -279,9 +278,6 @@ def simulate_frames(args: argparse.Namespace) -> dict[str, object]:
         center_b_y = torch.tensor(0.5 * args.impact_parameter, device=device)
         overlap = math.exp(-((float(center_a_x - center_b_x)) ** 2) / (2.0 * args.collision_width * args.collision_width))
 
-        squash = 0.30 + 0.55 * (1.0 - overlap)
-        nucleus_a = gaussian_torch(xx, yy, center_a_x, center_a_y, args.radius * squash, args.radius)
-        nucleus_b = gaussian_torch(xx, yy, center_b_x, center_b_y, args.radius * squash, args.radius)
         source_pulse = math.exp(-((t_lab - 0.12) ** 2) / (2.0 * args.source_duration * args.source_duration))
         e = e + args.normalization * source_pulse * overlap * glauber_source * args.dt
         temperature_for_eos = args.temperature_scale * torch.pow(torch.clamp(e, min=0.0) / max(args.energy_scale, 1.0e-8), 0.25)

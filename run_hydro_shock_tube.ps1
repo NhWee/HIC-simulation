@@ -10,7 +10,10 @@ if (-not (Test-Path -LiteralPath $Python)) {
 Push-Location $ProjectRoot
 try {
     & $Python -m hic.hydro_shock_tube @args
+    $PythonExitCode = $LASTEXITCODE
 }
 finally {
     Pop-Location
 }
+
+exit $PythonExitCode

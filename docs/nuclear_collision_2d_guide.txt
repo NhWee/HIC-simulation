@@ -32,10 +32,14 @@ Model
 -----
 The initial source uses a Glauber-like mixture:
 
-T_A, T_B = moving Woods-Saxon-like transverse thickness profiles
-wounded  = T_A * (1 - exp(-T_B)) + T_B * (1 - exp(-T_A))
-binary   = T_A * T_B
+T_A, T_B = moving Woods-Saxon-like transverse thickness profiles [fm^-2]
+wounded  = T_A * (1 - exp(-sigma_NN * T_B)) + T_B * (1 - exp(-sigma_NN * T_A))
+binary   = sigma_NN * T_A * T_B
 e_source = norm * ((1 - alpha) * wounded + alpha * binary)
+
+Both densities are converted to counts per grid cell, the same units as the
+Monte Carlo Glauber mode, so the two modes give comparable source sizes.
+Only the region where the two nuclei overlap deposits energy.
 
 With --initial-condition mc-glauber, each nucleus is sampled event-by-event
 from a Woods-Saxon density. Nucleons become participants when an A-B pair is
@@ -80,7 +84,12 @@ Gaussian nucleon width used by mc-glauber mode.
 
 --inelastic-cross-section
 Nucleon-nucleon inelastic cross section in fm^2. The default 4.2 is roughly
-42 mb, a reasonable high-energy heavy-ion scale for this toy model.
+42 mb, a reasonable high-energy heavy-ion scale for this toy model. It sets
+both the Monte Carlo participant tagging and the optical Glauber densities of
+the smooth mode.
+
+--cpu
+Run on the CPU even when CUDA is available.
 
 --seed
 Random seed used by mc-glauber mode.
@@ -161,9 +170,9 @@ Particlization prototype:
 
 .\run_particlization.ps1 --freezeout-surface outputs\freezeout_surface.csv --particles 10000 --output outputs\particles.csv --summary-output outputs\particle_observables.csv
 
-This samples pion-like particles from freeze-out candidate cells using a simple
-Boltzmann transverse-momentum distribution and an approximate transverse-flow
-kick. It now records p dot u, p dot dSigma, and a Cooper-Frye-like positive
+This samples pion-like particles from freeze-out candidate cells using the
+Boltzmann transverse-momentum distribution dN/dpT ~ pT exp(-mT/T) and an
+approximate transverse-flow kick. It now records p dot u, p dot dSigma, and a Cooper-Frye-like positive
 weight for each sampled particle. It writes sampled particle momenta and a
 summary with mean pT, v2, v3, and mean Cooper-Frye-like weight. This is not a
 full Cooper-Frye sampler yet. If the freeze-out surface has a temperature
