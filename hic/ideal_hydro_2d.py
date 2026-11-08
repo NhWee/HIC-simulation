@@ -50,17 +50,21 @@ def primitive_from_conserved(
         #   v = |M| / (T00 + p(e)),  e = T00 - |M| v
         # by fixed-point iteration. Using a constant sound speed here makes the
         # recovered primitive state inconsistent with the pressure flux.
+        # The map v -> |M| / (T00 + p(T00 - |M| v)) is increasing with slope
+        # v^2 cs2 < 1 at the solution, so the plain iteration converges
+        # monotonically; 16 steps reach float32 roundoff for v <= 0.95. (A 0.5
+        # damping used earlier slowed the contraction to ~0.67 per step and
+        # left errors of up to 3% in e after 12 steps.)
         pressure_guess = eos.pressure(energy)
         velocity = torch.clamp(momentum / torch.clamp(energy + pressure_guess, min=energy_floor), 0.0, 0.999)
-        for _ in range(12):
+        for _ in range(16):
             energy_guess = torch.clamp(energy - momentum * velocity, min=energy_floor)
             pressure_guess = eos.pressure(energy_guess)
-            updated_velocity = torch.clamp(
+            velocity = torch.clamp(
                 momentum / torch.clamp(energy + pressure_guess, min=energy_floor),
                 min=0.0,
                 max=0.999,
             )
-            velocity = 0.5 * (velocity + updated_velocity)
         velocity = torch.where(small, torch.zeros_like(velocity), velocity)
 
     energy_density = torch.clamp(energy - momentum * velocity, min=energy_floor)
