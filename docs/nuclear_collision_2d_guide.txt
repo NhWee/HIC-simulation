@@ -148,8 +148,15 @@ Conservative ideal-hydrodynamics prototype:
 This evolves T00, T0x, and T0y with a Rusanov finite-volume update and the
 analytic equation of state p = c_s^2 e. It is still an early prototype, but it
 uses energy-momentum conservation rather than scalar diffusion. With
---bjorken-expansion, it also applies boost-invariant longitudinal cooling,
-e(tau) proportional to tau^-(1+c_s^2), as an operator-split source term.
+--bjorken-expansion, it also applies the boost-invariant (Milne-frame) source
+terms as an operator-split step:
+
+d(tau T^{tau tau})/dtau = -p,    d(tau T^{tau i})/dtau = 0.
+
+For a fluid at rest this is Bjorken cooling, e(tau) proportional to
+tau^-(1+c_s^2). With transverse flow the momentum is only diluted by the
+longitudinal expansion; cooling e at fixed velocity, as earlier versions did,
+damps the flow.
 
 --shear-viscosity
 Optional prototype momentum-diffusion coefficient. This damps transverse
@@ -208,17 +215,26 @@ Default analytic equation of state, p = c_s^2 e. This is the only mode with
 the simple analytic Bjorken cooling validation.
 
 --eos crossover
-Toy crossover-like equation of state with low-density and high-density sound
-speeds connected by a smooth transition. It is not a lattice-QCD table yet, but
-it makes the EoS replaceable and gives a controlled soft-region prototype.
+Toy crossover-like equation of state, p = c2_eff(e) * e, where c2_eff moves
+smoothly from the low-density to the high-density value. It is not a
+lattice-QCD table, but it makes the EoS replaceable. Because p/e rises across
+the transition, the sound speed squared dp/de peaks near the transition
+energy instead of dipping (about 0.47 with the default parameters); the solver
+uses that maximum as its signal speed.
 
 --eos table
-Reads a CSV equation-of-state table with energy_density, pressure, and
-sound_speed2 columns, then linearly interpolates pressure and sound speed during
-the hydro update. The included data\eos_table.csv is a compact demonstration
-table, not a production lattice-QCD EoS. If the table includes temperature,
-freeze-out surfaces record the interpolated local temperature for
-particlization.
+Reads a CSV equation-of-state table with energy_density and pressure columns
+and optional sound_speed2 and temperature columns. The pressure is interpolated
+linearly, goes linearly to zero below the first row, and continues with the
+last slope above the last row. The solver's sound speed is dp/de of that
+interpolation, and the temperature follows from e + p = T s. The included
+data\eos_table.csv is a compact demonstration table, not a production
+lattice-QCD EoS; data\README.md describes it. Check any table with:
+
+.\.venv\Scripts\python.exe -m hic.eos --eos-table data\eos_table.csv
+
+If the table includes temperature, freeze-out surfaces record the local
+temperature for particlization.
 
 Example:
 
@@ -231,8 +247,12 @@ Hydrodynamics validation:
 .\run_hydro_validation.ps1 --output outputs\hydro_validation.csv
 
 The validation script checks exact preservation of uniform rest and uniformly
-boosted states, total-energy drift in a smooth Gaussian fireball, and the
-analytic uniform Bjorken cooling law.
+boosted states, energy conservation of a smooth Gaussian fireball with the
+energy that leaves the grid counted as outflow, the analytic uniform Bjorken
+cooling law, crossover-EoS substep convergence, and the analytic Gubser flow
+(S. S. Gubser, Phys. Rev. D 82, 085027 (2010)). The Gubser test evolves
+q = 1/fm from tau = 1 to 2 fm/c on two grids and requires a relative L1 error
+below 0.15 and first-order convergence.
 
 Hydrodynamics convergence/stability scan:
 
@@ -255,9 +275,18 @@ By default:
 
 outputs\nuclear_collision_2d.html
 
+Status of earlier next steps
+----------------------------
+1. Gubser and Bjorken validation problems: done (hydro_validation).
+2. Equation-of-state table and analytic EoS switch: done (--eos).
+3. Surface elements with normals: done in the Blender event pipeline, which
+   builds d sigma_mu from the freeze-out time map tau_f(x, y).
+4. Cooper-Frye sampling: done in the Blender event pipeline.
+
 Next steps
 ----------
-1. add Gubser/Bjorken-inspired validation problems
-2. add an equation of state table or a controlled analytic EoS switch
-3. turn freeze-out candidate cells into surface elements with normals
-4. replace approximate particlization with Cooper-Frye sampling
+1. Use the tau_f(x, y) surface and the Cooper-Frye sampler of
+   hic\blender_event_pipeline.py in ideal_hydro_2d and particlization, whose
+   surface normals are still built from the energy-density gradient.
+2. Replace the demonstration EoS with a lattice-QCD table.
+3. Upgrade the first-order Rusanov update to a second-order scheme.

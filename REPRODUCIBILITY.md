@@ -5,7 +5,12 @@ generated cache, `.blend`, PNG, CSV, or MP4 file is required from Git.
 
 ## Tested environment
 
-The reference result was last verified with:
+The reference values below were regenerated on a CPU with Python 3.13.18,
+NumPy 2.4.4, and PyTorch 2.15.0 on Linux. The Linux jobs in
+`.github/workflows/tests.yml` check them against the pinned PyTorch 2.11.0
+CPU build through `tests/test_reference_event.py`.
+
+The Blender result was last rendered with:
 
 - Windows, PowerShell
 - Python 3.13.3
@@ -51,7 +56,16 @@ Use `-Cpu` for both setup and reproduction when CUDA 12.8 is unavailable:
 ```
 
 The CPU path implements the same equations. Floating-point roundoff and runtime
-will differ from the reference GPU run.
+differ between devices; the tolerances below absorb them.
+
+On Linux or macOS, run the same stages with `python -m`, as described in the
+README:
+
+```bash
+python -m hic.hydro_validation --cpu --output outputs/hydro_validation.csv
+python -m hic.blender_event_pipeline --cpu
+python -m pytest
+```
 
 ## Manual staged procedure
 
@@ -102,29 +116,73 @@ The reference video is 1280 x 720, 24 fps, 312 frames, and 13 seconds long.
 ## Reference audit
 
 `outputs/blender_physics_event.audit.json` must contain `"passed": true`.
-For seed 17 and `b=5.7 fm`, the tested CUDA run produced:
+For seed 17 and `b=5.7 fm`, the CPU reference run produced:
 
 ```text
 Npart                                      236
 Ncoll                                      574
 pre-equilibrium tau range                  0.1 -> 0.6 fm/c
-initial max Landau effective temperature   0.61184 GeV
-handoff max effective temperature          0.37000 GeV
+initial max Landau effective temperature   0.47479 GeV
+handoff max effective temperature          0.28024 GeV
 energy-weighted handoff pre-flow            0.14869 c
-Landau eigen-equation residual              3.52e-7
-handoff temperature L-infinity error        7.38e-7 GeV
-QGP-core cells at hydrodynamization         3524
+Landau eigen-equation residual              3.54e-7
+handoff temperature L-infinity error        6.0e-8 GeV
+QGP-core cells at hydrodynamization         3349
+hydrodynamic evolution                      0.6 -> 4.657 fm/c (52 snapshots)
 freeze-out cells                            4039
-sampled particles                           900
-mean pT                                     0.4491 GeV
-v2 relative to the reaction plane           0.0119
+displayed particles                         900
+Cooper-Frye candidates for observables      1000000
+mean pT                                     0.4629 +- 0.0004 GeV
+v2 relative to the reaction plane           0.0142 +- 0.0008
 ```
 
-The integer Glauber geometry should be stable for the fixed NumPy seed. Small
-floating-point differences in hydro, surface extraction, and sampled
-observables are acceptable across PyTorch devices, GPU architectures, and
-Blender versions. The audit tolerances, rather than byte-identical generated
-files, define a successful reproduction.
+The integer Glauber geometry must match exactly for the fixed NumPy seed.
+`tests/test_reference_event.py` accepts 0.2% in the temperatures, 0.001 c in
+the pre-flow, 1% in the cell counts, 0.05 fm/c in the hydrodynamic lifetime,
+and the larger of four statistical errors and 0.0015 GeV (pT) or 0.002 (v2)
+in the observables. Small differences across PyTorch devices, GPU
+architectures, and Blender versions are expected; these tolerances, rather
+than byte-identical generated files, define a successful reproduction.
+
+## Corrections in this revision
+
+Earlier revisions produced the values in the first column. Each correction
+below was checked separately on the same event.
+
+| Quantity | Before | After |
+| --- | ---: | ---: |
+| initial max Landau effective temperature | 0.612 GeV | 0.475 GeV |
+| handoff max effective temperature | 0.370 GeV | 0.280 GeV |
+| QGP-core cells at hydrodynamization | 3524 | 3349 |
+| hydrodynamic evolution until `T<145 MeV` | 4.55 fm/c | 4.66 fm/c |
+| mean pT, average of 4 x 10^6 candidates | 0.4477 GeV | 0.4631 GeV |
+| v2, average of 4 x 10^6 candidates | 0.0132 +- 0.0003 | 0.0147 +- 0.0003 |
+
+1. **Boost-invariant source terms.** The Bjorken step cooled `e` at fixed
+   velocity. With transverse flow the Milne-frame equations require
+   `d(tau T^taui)/dtau = 0` from the geometry, so the old step damped the
+   transverse momentum as `tau^-(1+cs2)` instead of `tau^-1`. The analytic
+   Gubser flow exposes this: the old solver stalled at a relative L1 error of
+   0.31-0.45 under grid refinement, while the corrected one converges at first
+   order (0.20, 0.10, 0.05 at `dx=0.2, 0.1, 0.05 fm`). This correction raises
+   the mean pT by 3.5% and v2 by about 10%.
+2. **Equation-of-state temperatures.** The temperature column of
+   `data/eos_table.csv` was not consistent with its pressure column; it
+   overstated T by up to 32%. Temperatures now follow from `p(e)` with
+   `T=145 MeV` kept at `e=0.35 GeV/fm^3`, so the switching surface stays where
+   it was. The tabulated pressure no longer has a constant 0.006 GeV/fm^3
+   vacuum value below the first node, and the solver's signal speed uses the
+   largest `dp/de` (0.367) instead of 1/3. See [data/README.md](data/README.md).
+3. **Observable statistics.** Mean pT and v2 used 28800 candidates, which
+   gives a single-run v2 spread of 0.005-0.006, about half of v2 itself. The
+   pipeline now uses 10^6 candidates (spread 0.0005) and reports the errors.
+4. **Primitive recovery.** For the tabulated and crossover EoS the damped
+   fixed-point iteration left errors of up to 3% in `e` at high velocity. The
+   undamped iteration reaches float32 roundoff; the reference observables did
+   not change beyond their errors.
+
+The PySide hydro cache, the event pipeline, and the standalone tools use the
+same solver and EoS code and change accordingly.
 
 ## Numerical traceability
 
@@ -152,8 +210,13 @@ control; publish selected rendered media through a release when needed.
 
 The pre-equilibrium stage is a transverse collisionless approximation rather
 than IP-Glasma or KoMPoST. Hydrodynamics is ideal and boost invariant rather
-than event-by-event 3+1D second-order viscous hydrodynamics. The included EoS is
-a compact demonstration table, and sampled hadrons free-stream without
-resonance decays or a hadronic transport afterburner. The output is suitable
-for numerical development and education, not precision extraction of QCD
-transport coefficients.
+than event-by-event 3+1D second-order viscous hydrodynamics, and the
+first-order Rusanov scheme is diffusive (about 10% L1 error against the Gubser
+flow at `dx=0.1 fm`). The included EoS is a compact demonstration table: it is
+thermodynamically consistent, but its `dp/de` exceeds 1/3 above about
+2.5 GeV/fm^3, unlike lattice QCD. With the default initial peak energy of
+6 GeV/fm^3 the hydrodynamic stage starts at 280 MeV and lasts only about
+4 fm/c, shorter than in realistic RHIC conditions. Sampled hadrons free-stream
+without resonance decays or a hadronic transport afterburner. The output is
+suitable for numerical development and education, not precision extraction of
+QCD transport coefficients.
