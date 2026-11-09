@@ -34,10 +34,16 @@ OBSERVABLES = {
 }
 
 
-def evaluate(base_args: list[str], peak_energy: float, seeds: list[int], observable: str) -> float:
+PARAMETERS = {"initial-peak-energy": "--initial-peak-energy", "energy-scale": "--energy-scale"}
+
+
+def evaluate(
+    base_args: list[str], peak_energy: float, seeds: list[int], observable: str, parameter: str = "initial-peak-energy"
+) -> float:
+    """Event-averaged observable with the normalization ``parameter`` set to ``peak_energy``."""
     values = []
     for seed in seeds:
-        args = pipeline.parse_args(base_args + ["--seed", str(seed), "--initial-peak-energy", f"{peak_energy:.10g}"])
+        args = pipeline.parse_args(base_args + ["--seed", str(seed), PARAMETERS[parameter], f"{peak_energy:.10g}"])
         audit = pipeline.simulate(args, verbose=False).audit
         if not audit["passed"]:
             raise RuntimeError(f"physics audit failed at peak energy {peak_energy:g}, seed {seed}")
@@ -54,6 +60,7 @@ def calibrate(
     tolerance: float = 0.01,
     max_iterations: int = 8,
     max_peak: float | None = None,
+    parameter: str = "initial-peak-energy",
 ) -> dict[str, object]:
     """Iterate on a power law value ~ A peak^b fitted (least squares in log-log) to every evaluation.
 
@@ -64,9 +71,9 @@ def calibrate(
     peak = initial_peak
     exponent = 0.75  # entropy ~ e^(3/4) for a nearly conformal fluid; refined from the history
     for _ in range(max_iterations):
-        value = evaluate(base_args, peak, seeds, observable)
+        value = evaluate(base_args, peak, seeds, observable, parameter)
         history.append((peak, value))
-        print(f"  peak energy {peak:9.4f} GeV/fm^3 -> {observable} = {value:.4g} (target {target:.4g})", flush=True)
+        print(f"  {parameter} {peak:9.4f} -> {observable} = {value:.4g} (target {target:.4g})", flush=True)
         if abs(value / target - 1.0) <= tolerance:
             break
         log_peak = np.log([p for p, _ in history])
@@ -85,10 +92,12 @@ def calibrate(
         "observable": observable,
         "target": target,
         "seeds": seeds,
-        "calibrated_initial_peak_energy_gev_fm3": history[-1][0],
+        "parameter": parameter,
+        "calibrated_value_of_parameter": history[-1][0],
+        "calibrated_initial_peak_energy_gev_fm3": history[-1][0] if parameter == "initial-peak-energy" else None,
         "calibrated_value": history[-1][1],
         "local_power_law_exponent": exponent,
-        "history": [{"initial_peak_energy": p, "value": v} for p, v in history],
+        "history": [{parameter.replace("-", "_"): p, "value": v} for p, v in history],
     }
 
 
@@ -100,7 +109,14 @@ def main() -> None:
     parser.add_argument("--seeds", type=int, nargs="+", default=[1, 2, 3])
     parser.add_argument("--grid-size", type=int, default=150)
     parser.add_argument("--extent", type=float, default=15.0, help="Transverse half-width (fm); central events need room.")
-    parser.add_argument("--initial-peak", type=float, default=6.0)
+    parser.add_argument(
+        "--parameter",
+        choices=sorted(PARAMETERS),
+        default="energy-scale",
+        help="energy-scale: one global constant for all events (use for centrality ensembles); "
+        "initial-peak-energy: per-event peak normalization (the Blender reference event).",
+    )
+    parser.add_argument("--initial-peak", type=float, default=None, help="Starting value (default 80 / 6).")
     parser.add_argument("--candidate-pool", type=int, default=160000, help="Cooper-Frye pool size (Monte Carlo noise).")
     parser.add_argument("--tolerance", type=float, default=0.01)
     parser.add_argument("--cpu", action="store_true")
@@ -116,16 +132,19 @@ def main() -> None:
     ]
     if args.cpu:
         base.append("--cpu")
-    max_peak = pipeline.read_eos_table(pipeline.parse_args([]).eos_table)[0][-1]
-    print(f"Calibrating {args.observable} to {args.target:g} at b={args.impact_parameter} fm, seeds {args.seeds}")
-    result = calibrate(base, args.seeds, args.observable, args.target, args.initial_peak, args.tolerance, max_peak=max_peak)
+    max_peak = pipeline.read_eos_table(pipeline.parse_args([]).eos_table)[0][-1] if args.parameter == "initial-peak-energy" else None
+    start = args.initial_peak if args.initial_peak is not None else (80.0 if args.parameter == "energy-scale" else 6.0)
+    print(f"Calibrating {args.parameter} so that {args.observable} = {args.target:g} at b={args.impact_parameter} fm, seeds {args.seeds}")
+    result = calibrate(
+        base, args.seeds, args.observable, args.target, start, args.tolerance, max_peak=max_peak, parameter=args.parameter
+    )
     result["impact_parameter"] = args.impact_parameter
     result["grid_size"] = args.grid_size
     result["extent"] = args.extent
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="ascii")
     print(
-        f"Calibrated --initial-peak-energy = {result['calibrated_initial_peak_energy_gev_fm3']:.4f} GeV/fm^3 "
+        f"Calibrated --{args.parameter} = {result['calibrated_value_of_parameter']:.4f} "
         f"({args.observable} = {result['calibrated_value']:.4g}); saved {args.output}"
     )
 

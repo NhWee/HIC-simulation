@@ -230,7 +230,9 @@ the marker is removed together with the fix.
 | `.\run_particlization.ps1` | Standalone freeze-out particle sampling |
 | `.\run_event_pipeline.ps1 --events 3` | Small multi-event numerical pipeline |
 | `.\run_visualize_results.ps1` | Plotly report from generated CSV files |
-| `python -m hic.calibrate_normalization --observable entropy --target <dS/deta>` | Tune `--initial-peak-energy` to a multiplicity target |
+| `python -m hic.calibrate_normalization --parameter energy-scale --observable dnch_deta --target <dNch/deta>` | Tune the global `--energy-scale` (or `--initial-peak-energy`) to a multiplicity target |
+| `python -m hic.flow_ensemble --energy-scale <K> --events-per-class 10` | Centrality-binned ensemble: dNch/deta, identified mean pT, v2{2}, v3{2}, v2{2}(pT), epsilon_n |
+| `python -m hic.plot_flow_ensemble outputs/flow_ensemble.json [--data measured.csv]` | HTML report of an ensemble, optionally with measurements overlaid |
 | `.\run_visual_simulation.ps1` | Browser-playable qualitative simulation |
 | `.\run_educational_visual.ps1` | Classroom-style educational board |
 | `.\run_educational_simulator_app.ps1` | Lightweight native educational simulator |

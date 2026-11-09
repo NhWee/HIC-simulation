@@ -122,6 +122,7 @@ class ParticleResult:
     dnch_deta: float  # pseudorapidity density at midrapidity
     dn_dy_primaries: float
     expected_in_window: float  # primaries in |eta_s| < eta_window
+    flow: dict[str, np.ndarray]  # per-event pair sums for cumulants and spectra (see flow_pair_sums)
 
 
 def sample_woods_saxon_3d(
@@ -194,7 +195,10 @@ def build_event_geometry(
     source_max = float(torch.max(source).detach().cpu())
     if source_max <= 0.0:
         raise RuntimeError("The sampled Glauber event has no binary collisions. Change the seed or impact parameter.")
-    source = source / source_max * args.initial_peak_energy
+    if getattr(args, "energy_scale", None) is None:
+        source = source / source_max * args.initial_peak_energy
+    # With --energy-scale the source stays in its natural units (participants per fm^2); the
+    # pre-equilibrium stage multiplies by the global scale, so multiplicity follows the geometry.
 
     collision_centers = np.column_stack((collision_x, collision_y)).astype(np.float32)
     return EventGeometry(
@@ -372,7 +376,13 @@ def evolve_pre_equilibrium(
         raw_stress_yy[-1],
         args.energy_floor,
     )
-    scale = args.initial_peak_energy / max(float(torch.max(raw_matched_energy).detach().cpu()), 1.0e-12)
+    if getattr(args, "energy_scale", None) is None:
+        # Event-by-event normalization: the Landau-frame peak at tau0 equals --initial-peak-energy.
+        scale = args.initial_peak_energy / max(float(torch.max(raw_matched_energy).detach().cpu()), 1.0e-12)
+    else:
+        # Global normalization: e(tau0) = energy_scale x (Landau-matched free-streamed source), the same
+        # constant for every event, as needed to compare centralities.
+        scale = float(args.energy_scale)
 
     energy_frames: list[np.ndarray] = []
     momentum_x_frames: list[np.ndarray] = []
@@ -725,6 +735,81 @@ def lorentz_boost(
     return lab_energy, lab_momentum
 
 
+FLOW_HARMONICS = (2, 3)
+FLOW_PT_EDGES = np.asarray((0.2, 0.4, 0.6, 0.8, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0))
+REFERENCE_PT_RANGE = (0.2, 3.0)
+
+
+def grouped_sum(values: np.ndarray, group: np.ndarray, groups: int) -> np.ndarray:
+    if np.iscomplexobj(values):
+        return np.bincount(group, values.real, groups) + 1j * np.bincount(group, values.imag, groups)
+    return np.bincount(group, values, groups)
+
+
+def pair_sum(
+    weight: np.ndarray,
+    phase: np.ndarray,
+    parent: np.ndarray,
+    groups: int,
+    first: np.ndarray,
+    second: np.ndarray,
+) -> tuple[float, float]:
+    """Sum over pairs (i in first, j in second) of w_i w_j exp(i n (phi_i - phi_j)), real part, and of w_i w_j,
+    excluding every pair whose members share a parent hadron (self-pairs and decay siblings).
+
+    Candidates in the Cooper-Frye pool are independent, so removing same-parent pairs leaves an
+    unbiased two-particle correlation of the underlying single-particle distribution.
+    """
+    q_first = weight[first] * phase[first]
+    q_second = weight[second] * phase[second]
+    q_total = q_first.sum() * np.conj(q_second.sum())
+    same = grouped_sum(q_first, parent[first], groups) * np.conj(grouped_sum(q_second, parent[second], groups))
+    w_total = weight[first].sum() * weight[second].sum()
+    w_same = grouped_sum(weight[first], parent[first], groups) * grouped_sum(weight[second], parent[second], groups)
+    return float((q_total - same.sum()).real), float(w_total - w_same.sum())
+
+
+def flow_pair_sums(
+    weight: np.ndarray,
+    pt: np.ndarray,
+    phi: np.ndarray,
+    charged: np.ndarray,
+    final_class: np.ndarray,
+    parent: np.ndarray,
+    groups: int,
+) -> dict[str, np.ndarray]:
+    """Per-event ingredients of v_n{2}, v_n{2}(pT) (scalar product with the reference flow) and spectra.
+
+    Weights must be in multiplicity units (dN per pool entry), so that summing over events weights
+    each event by its number of pairs, as in a measurement.
+    """
+    reference = charged & (pt >= REFERENCE_PT_RANGE[0]) & (pt < REFERENCE_PT_RANGE[1])
+    bins = np.digitize(pt, FLOW_PT_EDGES) - 1
+    nbins = FLOW_PT_EDGES.size - 1
+    out: dict[str, np.ndarray] = {"pt_edges": FLOW_PT_EDGES}
+    for n in FLOW_HARMONICS:
+        phase = np.exp(1j * n * phi)
+        num, den = pair_sum(weight, phase, parent, groups, reference, reference)
+        out[f"v{n}_ref_num"], out[f"v{n}_ref_den"] = np.asarray(num), np.asarray(den)
+        q = np.sum(weight[reference] * phase[reference])
+        out[f"q{n}_ref"] = np.asarray([q.real, q.imag]) / max(float(weight[reference].sum()), 1.0e-300)
+        for label, selection in (("charged", charged), ("pion", charged & (final_class == 0)),
+                                 ("kaon", charged & (final_class == 1)), ("proton", charged & (final_class == 2))):
+            if n != 2 and label != "charged":
+                continue
+            nums, dens = np.zeros(nbins), np.zeros(nbins)
+            for b in range(nbins):
+                chosen = selection & (bins == b)
+                nums[b], dens[b] = pair_sum(weight, phase, parent, groups, chosen, reference)
+            out[f"v{n}_{label}_pt_num"], out[f"v{n}_{label}_pt_den"] = nums, dens
+    for label, selection in (("charged", charged), ("pion", charged & (final_class == 0)),
+                             ("kaon", charged & (final_class == 1)), ("proton", charged & (final_class == 2))):
+        out[f"dn_dy_{label}_pt"] = np.asarray(
+            [float(weight[selection & (bins == b)].sum()) for b in range(nbins)]
+        )
+    return out
+
+
 def sample_cooper_frye_particles(
     args: argparse.Namespace,
     surface: SurfaceResult,
@@ -825,6 +910,8 @@ def sample_cooper_frye_particles(
         for k in range(len(CLASS_NAMES))
     ])
 
+    flow = flow_pair_sums(pool_scale * weight, pt, phi, charged, final_class, origin, candidate_count)
+
     if args.particles > 0:
         primary_count = args.particles
     else:
@@ -860,7 +947,26 @@ def sample_cooper_frye_particles(
         dnch_deta=pool_scale * float(np.sum(charged_weight * pt / mt)),
         dn_dy_primaries=dn_dy_primaries,
         expected_in_window=expected_in_window,
+        flow=flow,
     )
+
+
+def participant_eccentricities(
+    energy_density: np.ndarray, axis: np.ndarray, harmonics: tuple[int, ...] = (2, 3)
+) -> dict[int, tuple[float, float]]:
+    """(epsilon_n, Psi_n) with epsilon_n exp(i n Psi_n) = -<r^n exp(i n phi)> / <r^n>, about the centroid."""
+    yy, xx = np.meshgrid(axis.astype(np.float64), axis.astype(np.float64), indexing="ij")
+    weight = np.clip(energy_density.astype(np.float64), 0.0, None)
+    total = weight.sum()
+    x = xx - float((weight * xx).sum() / total)
+    y = yy - float((weight * yy).sum() / total)
+    r = np.hypot(x, y)
+    phi = np.arctan2(y, x)
+    result = {}
+    for n in harmonics:
+        moment = -np.sum(weight * r**n * np.exp(1j * n * phi)) / np.sum(weight * r**n)
+        result[n] = (float(abs(moment)), float(np.angle(moment) / n))
+    return result
 
 
 def eos_entropy_at_tsw(args: argparse.Namespace, eos: EquationOfState) -> float:
@@ -898,6 +1004,22 @@ def entropy_closure(
     return initial, float(s_sw * np.sum(u_dsigma))
 
 
+def flow_audit(particles: ParticleResult, hydro: HydroResult, axis: np.ndarray | None) -> dict[str, float]:
+    result: dict[str, float] = {}
+    if axis is None:
+        return result
+    planes = participant_eccentricities(hydro.energy_density[0], axis)
+    for n in FLOW_HARMONICS:
+        eps, psi = planes[n]
+        q = particles.flow[f"q{n}_ref"]
+        v2_sq = float(particles.flow[f"v{n}_ref_num"]) / max(float(particles.flow[f"v{n}_ref_den"]), 1.0e-300)
+        result[f"eps{n}_participant"] = eps
+        result[f"psi{n}_participant"] = psi
+        result[f"v{n}_participant_plane"] = float(q[0] * math.cos(n * psi) + q[1] * math.sin(n * psi))
+        result[f"v{n}_two_particle"] = math.copysign(math.sqrt(abs(v2_sq)), v2_sq)
+    return result
+
+
 def physics_audit(
     args: argparse.Namespace,
     geometry: EventGeometry,
@@ -907,6 +1029,7 @@ def physics_audit(
     particles: ParticleResult,
     entropy: tuple[float, float],
     eos: EquationOfState,
+    axis: np.ndarray | None = None,
 ) -> dict[str, object]:
     initial_entropy, surface_entropy = entropy
     entropy_ratio = surface_entropy / max(initial_entropy, 1.0e-12)
@@ -937,7 +1060,9 @@ def physics_audit(
     )
     temperature_mismatch = np.abs(hydro.temperature[0] - preequilibrium.effective_temperature[-1])
     handoff_velocity_error = float(np.max(velocity_mismatch[handoff_medium])) if np.any(handoff_medium) else np.inf
-    handoff_peak_energy_error = abs(float(np.max(hydro.energy_density[0])) - args.initial_peak_energy)
+    handoff_peak_energy_error = abs(
+        float(np.max(hydro.energy_density[0])) - float(np.max(preequilibrium.landau_energy_density[-1]))
+    )
     matched_medium = preequilibrium.effective_temperature >= args.freezeout_temperature
     max_landau_eigen_residual = float(
         np.max(preequilibrium.landau_residual[matched_medium]) if np.any(matched_medium) else np.inf
@@ -1007,6 +1132,7 @@ def physics_audit(
         "mean_pt_charged_kaon_gev": float(particles.mean_pt_identified[1]),
         "mean_pt_proton_antiproton_gev": float(particles.mean_pt_identified[2]),
         "expected_primaries_in_eta_window": particles.expected_in_window,
+        **flow_audit(particles, hydro, axis),
         "mean_pt_gev": particles.mean_pt,
         "v2_reaction_plane": particles.v2,
         "v3_reaction_plane": particles.v3,
@@ -1126,7 +1252,19 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--binary-fraction", type=float, default=0.14)
     parser.add_argument("--grid-size", type=int, default=160)
     parser.add_argument("--extent", type=float, default=12.0, help="Transverse half-width in fm.")
-    parser.add_argument("--initial-peak-energy", type=float, default=6.0, help="GeV/fm^3")
+    parser.add_argument(
+        "--initial-peak-energy",
+        type=float,
+        default=6.0,
+        help="GeV/fm^3; per-event normalization of the Landau-frame peak at tau0 (ignored with --energy-scale)",
+    )
+    parser.add_argument(
+        "--energy-scale",
+        type=float,
+        default=None,
+        help="Global normalization: e(tau0) = scale x Landau-matched source (GeV/fm^3 per participant/fm^2 "
+        "after free streaming). Use it to compare centralities; calibrate with hic.calibrate_normalization.",
+    )
     parser.add_argument("--tau-initial", type=float, default=0.1, help="Pre-equilibrium formation time in fm/c.")
     parser.add_argument("--tau0", type=float, default=0.6, help="fm/c")
     parser.add_argument("--preeq-snapshots", type=int, default=9)
@@ -1176,7 +1314,7 @@ def validate_args(args: argparse.Namespace) -> None:
     if not 0.0 <= args.impact_parameter <= 2.0 * args.radius + 2.0:
         raise SystemExit("impact parameter is outside the supported Au+Au geometry")
     table_max_energy = read_eos_table(args.eos_table)[0][-1]
-    if args.initial_peak_energy > table_max_energy:
+    if getattr(args, "energy_scale", None) is None and args.initial_peak_energy > table_max_energy:
         raise SystemExit(
             f"initial peak energy exceeds the supplied EoS table range ({table_max_energy:g} GeV/fm^3)"
         )
@@ -1208,7 +1346,7 @@ def simulate(args: argparse.Namespace, verbose: bool = True) -> EventResult:
     surface = build_freezeout_surface(hydro, axis, dx)
     particles = sample_cooper_frye_particles(args, surface, rng)
     entropy = entropy_closure(args, eos, hydro, surface, dx)
-    audit = physics_audit(args, geometry, preequilibrium, hydro, surface, particles, entropy, eos)
+    audit = physics_audit(args, geometry, preequilibrium, hydro, surface, particles, entropy, eos, axis)
     return EventResult(device, axis, geometry, preequilibrium, hydro, surface, particles, audit)
 
 
