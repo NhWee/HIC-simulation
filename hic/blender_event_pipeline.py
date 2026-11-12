@@ -108,6 +108,10 @@ class ParticleResult:
     mean_pt: float
     v2: float
     v3: float
+    mean_pt_error: float
+    v2_error: float
+    v3_error: float
+    observable_candidates: int
 
 
 def sample_woods_saxon_3d(
@@ -197,6 +201,8 @@ def build_event_geometry(
 
 def build_table_eos(path: Path) -> EquationOfState:
     energy, pressure, sound_speed2, temperature = read_eos_table(path)
+    if not temperature:
+        raise ValueError(f"The event pipeline needs a temperature column in the EoS table: {path}")
     return EquationOfState(
         kind="table",
         speed_of_sound2=1.0 / 3.0,
@@ -212,16 +218,12 @@ def build_table_eos(path: Path) -> EquationOfState:
 
 
 def physical_temperature(eos: EquationOfState, energy_density: torch.Tensor) -> torch.Tensor:
-    temperature = eos.temperature(energy_density)
-    minimum_table_energy = float(eos.table_energy[0])
-    maximum_table_energy = float(eos.table_energy[-1])
-    maximum_table_temperature = float(eos.table_temperature[-1])
-    high_energy_temperature = maximum_table_temperature * torch.pow(
-        torch.clamp(energy_density / maximum_table_energy, min=1.0),
-        0.25,
-    )
-    temperature = torch.where(energy_density > maximum_table_energy, high_energy_temperature, temperature)
-    return torch.where(energy_density >= minimum_table_energy, temperature, torch.zeros_like(temperature))
+    """Temperature from the tabulated EoS, including its consistent extrapolation.
+
+    Beyond the table the EoS continues p(e) linearly and T follows
+    T ~ (e + p)^(k / (1 + k)), so no separate high-energy rule is needed.
+    """
+    return eos.temperature(energy_density)
 
 
 def landau_match_transverse_tensor(
@@ -669,6 +671,14 @@ def lorentz_boost(
     return lab_energy, lab_momentum
 
 
+def weighted_mean_and_error(values: np.ndarray, weights: np.ndarray) -> tuple[float, float]:
+    """Self-normalized importance-sampling estimate and its statistical error."""
+    normalized = weights / weights.sum()
+    mean = float(np.sum(normalized * values))
+    error = float(np.sqrt(np.sum(normalized * normalized * (values - mean) ** 2)))
+    return mean, error
+
+
 def sample_cooper_frye_particles(
     args: argparse.Namespace,
     surface: SurfaceResult,
@@ -678,9 +688,10 @@ def sample_cooper_frye_particles(
     envelope = np.maximum(envelope.astype(np.float64), 1.0e-14)
     surface_probability = envelope / envelope.sum()
     species_probability = thermal_species_probabilities(args.freezeout_temperature)
-    # The displayed particle set stays compact, while a larger importance-
-    # sampled pool stabilizes integrated pT and vn estimates.
-    candidate_count = max(args.particles * 32, 12000)
+    # The displayed particle set stays compact. Integrated pT and vn come from
+    # the whole importance-weighted pool; with ~3e4 candidates the v2 sampling
+    # error is comparable to v2 itself, so the default pool holds 1e6.
+    candidate_count = max(int(getattr(args, "observable_candidates", 1_000_000)), args.particles * 32, 12000)
 
     cell = rng.choice(surface.tau.size, size=candidate_count, replace=True, p=surface_probability)
     species = rng.choice(SPECIES_NAMES.size, size=candidate_count, replace=True, p=species_probability)
@@ -729,6 +740,10 @@ def sample_cooper_frye_particles(
     candidate_pt = np.sqrt(momentum_x * momentum_x + momentum_y * momentum_y)
     candidate_phi = np.arctan2(momentum_y, momentum_x)
     observable_weight = importance / importance.sum()
+    # The impact parameter is along +y in this event geometry.
+    mean_pt, mean_pt_error = weighted_mean_and_error(candidate_pt, observable_weight)
+    v2, v2_error = weighted_mean_and_error(np.cos(2.0 * (candidate_phi - 0.5 * math.pi)), observable_weight)
+    v3, v3_error = weighted_mean_and_error(np.cos(3.0 * candidate_phi), observable_weight)
     return ParticleResult(
         species=species[selected].astype(np.int8),
         mass=masses[selected].astype(np.float32),
@@ -741,10 +756,13 @@ def sample_cooper_frye_particles(
         momentum_x=selected_px.astype(np.float32),
         momentum_y=selected_py.astype(np.float32),
         cooper_frye_weight=importance[selected].astype(np.float32),
-        mean_pt=float(np.sum(observable_weight * candidate_pt)),
-        # The impact parameter is along +y in this event geometry.
-        v2=float(np.sum(observable_weight * np.cos(2.0 * (candidate_phi - 0.5 * math.pi)))),
-        v3=float(np.sum(observable_weight * np.cos(3.0 * candidate_phi))),
+        mean_pt=mean_pt,
+        v2=v2,
+        v3=v3,
+        mean_pt_error=mean_pt_error,
+        v2_error=v2_error,
+        v3_error=v3_error,
+        observable_candidates=int(candidate_count),
     )
 
 
@@ -831,9 +849,13 @@ def physics_audit(
         "max_temperature_rise_count": temperature_rises,
         "freezeout_cells": int(surface.tau.size),
         "sampled_particles": int(particles.species.size),
+        "observable_candidates": particles.observable_candidates,
         "mean_pt_gev": particles.mean_pt,
+        "mean_pt_stat_error_gev": particles.mean_pt_error,
         "v2_reaction_plane": particles.v2,
+        "v2_stat_error": particles.v2_error,
         "v3_reaction_plane": particles.v3,
+        "v3_stat_error": particles.v3_error,
     }
     return audit
 
@@ -920,6 +942,10 @@ def save_event_cache(
         mean_pt=np.asarray(particles.mean_pt, dtype=np.float32),
         v2=np.asarray(particles.v2, dtype=np.float32),
         v3=np.asarray(particles.v3, dtype=np.float32),
+        mean_pt_stat_error=np.asarray(particles.mean_pt_error, dtype=np.float32),
+        v2_stat_error=np.asarray(particles.v2_error, dtype=np.float32),
+        v3_stat_error=np.asarray(particles.v3_error, dtype=np.float32),
+        observable_candidates=np.asarray(particles.observable_candidates, dtype=np.int64),
     )
     audit_path = args.audit_output or args.output.with_suffix(".audit.json")
     audit_path.write_text(json.dumps(audit, indent=2), encoding="ascii")
@@ -927,7 +953,7 @@ def save_event_cache(
     print(f"Saved physics audit: {audit_path}")
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a physics-driven heavy-ion event cache for Blender.")
     parser.add_argument("--output", type=Path, default=Path("outputs/blender_physics_event.npz"))
     parser.add_argument("--audit-output", type=Path, default=None)
@@ -953,18 +979,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cfl", type=float, default=0.24)
     parser.add_argument("--freezeout-temperature", type=float, default=0.145, help="GeV")
     parser.add_argument("--eta-window", type=float, default=0.8)
-    parser.add_argument("--particles", type=int, default=900)
+    parser.add_argument("--particles", type=int, default=900, help="Hadrons kept for display in the Blender scene.")
+    parser.add_argument(
+        "--observable-candidates",
+        type=int,
+        default=1_000_000,
+        help="Importance-sampled Cooper-Frye candidates used for mean pT and vn.",
+    )
     parser.add_argument("--energy-floor", type=float, default=1.0e-8)
     parser.add_argument("--cpu", action="store_true")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    eos = build_table_eos(args.eos_table)
     if not 0.0 <= args.impact_parameter <= 2.0 * args.radius + 2.0:
         raise SystemExit("impact parameter is outside the supported Au+Au geometry")
-    if args.initial_peak_energy > 6.0:
-        raise SystemExit("initial peak energy exceeds the supplied EoS table range (6 GeV/fm^3)")
+    if args.initial_peak_energy > eos.table_energy[-1]:
+        raise SystemExit(
+            f"initial peak energy exceeds the EoS table range ({eos.table_energy[-1]:g} GeV/fm^3); "
+            "extend the table or lower --initial-peak-energy"
+        )
     if not 0.0 < args.tau_initial < args.tau0:
         raise SystemExit("tau-initial must be positive and smaller than tau0")
     if args.preeq_snapshots < 2 or args.preeq_angles < 8:
@@ -978,7 +1014,6 @@ def main() -> None:
     rng = np.random.default_rng(args.seed)
     xx, yy, dx = make_grid(args.grid_size, args.extent, device)
     axis = np.linspace(-args.extent, args.extent, args.grid_size, dtype=np.float32)
-    eos = build_table_eos(args.eos_table)
     geometry = build_event_geometry(args, xx, yy, rng)
     print(f"Glauber event: b={args.impact_parameter:.2f} fm, Npart={geometry.n_part}, Ncoll={geometry.n_coll}")
     preequilibrium = evolve_pre_equilibrium(args, geometry.source, eos)
@@ -989,7 +1024,9 @@ def main() -> None:
     save_event_cache(args, device, geometry, preequilibrium, hydro, surface, particles, axis, audit)
     print(
         f"Particlization: cells={surface.tau.size}, particles={particles.species.size}, "
-        f"mean pT={particles.mean_pt:.3f} GeV, v2={particles.v2:.4f}"
+        f"mean pT={particles.mean_pt:.4f}+-{particles.mean_pt_error:.4f} GeV, "
+        f"v2={particles.v2:.4f}+-{particles.v2_error:.4f} "
+        f"({particles.observable_candidates} candidates)"
     )
     if not audit["passed"]:
         raise SystemExit("Physics audit failed. Inspect the generated audit JSON.")

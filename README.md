@@ -20,26 +20,34 @@ The reference event is Au+Au at `sqrt(sNN)=200 GeV`, `b=5.7 fm`, seed 17.
 The bright interior is the hydrodynamic temperature field, the highlighted
 core is `T>=165 MeV`, and the outer contour marks `Tsw=145 MeV`.
 
+The images show the corrected event described in
+[REPRODUCIBILITY.md](REPRODUCIBILITY.md#corrections-in-this-revision). The
+on-screen diagnostics match the reference audit; for example, the field peaks
+at 280 MeV right after hydrodynamization.
+
 | Collisionless pre-equilibrium | Sampled hadrons after particlization |
 | --- | --- |
 | ![Landau-frame effective-temperature field during pre-equilibrium](docs/assets/qgp-formation.webp) | ![Pion, kaon, and proton classes after Cooper-Frye sampling](docs/assets/sampled-hadrons.webp) |
 
-Indicative values from the tested CUDA reference run:
+Values from the reference run on a CPU:
 
 | Observable | Result |
 | --- | ---: |
 | Glauber geometry | `Npart=236`, `Ncoll=574` |
 | Pre-equilibrium interval | `0.1 -> 0.6 fm/c` |
-| Maximum Landau effective temperature | `612 -> 370 MeV` |
+| Maximum Landau effective temperature | `475 -> 280 MeV` |
 | Energy-weighted handoff pre-flow | `0.149 c` |
-| QGP-core cells at hydrodynamization | `3524` |
-| Sampled hadrons | `900` |
-| Mean transverse momentum | `0.449 GeV` |
-| Reaction-plane `v2` | `0.0119` |
+| QGP-core cells at hydrodynamization | `3349` |
+| Hydrodynamic evolution until `T<145 MeV` | `0.6 -> 4.66 fm/c` |
+| Displayed hadrons | `900` |
+| Mean transverse momentum | `0.4629 +- 0.0004 GeV` |
+| Reaction-plane `v2` | `0.0142 +- 0.0008` |
 
-These values are regression references rather than experimental predictions.
-The complete run writes a 13-second, 1280 x 720, 24 fps Blender animation and
-a machine-readable physics audit.
+Mean pT and `v2` come from 10^6 importance-weighted Cooper-Frye candidates;
+the uncertainties are their statistical errors. These values are regression
+references rather than experimental predictions, and `tests/test_reference_event.py`
+checks them. The complete run writes a 13-second, 1280 x 720, 24 fps Blender
+animation and a machine-readable physics audit.
 
 ## Physics scope
 
@@ -49,8 +57,10 @@ The reference Blender event uses:
 2. wounded-nucleon plus binary-collision energy deposition
 3. transverse collisionless free streaming from `tau=0.1` to `0.6 fm/c`
 4. transport of `T00`, `T0i`, and `Tij`, with timelike-eigenvector Landau matching
-5. a tabulated crossover equation of state
-6. boost-invariant 2+1D ideal relativistic hydrodynamics
+5. a tabulated crossover equation of state whose temperature and sound speed
+   follow thermodynamically from its pressure (see [data/README.md](data/README.md))
+6. boost-invariant 2+1D ideal relativistic hydrodynamics with the exact
+   Milne-frame source terms `-(T^tautau + p)/tau` and `-T^taui/tau`
 7. a `Tsw=145 MeV` isothermal surface
 8. positive-contribution Cooper-Frye sampling of pion, kaon, and proton classes
 9. ballistic free streaming of sampled hadrons
@@ -63,7 +73,9 @@ equilibrium before hydrodynamization.
 This is a physically constrained prototype, not a precision event generator.
 It does not include second-order viscous hydrodynamics, a full 3+1D kinetic
 pre-equilibrium solver, jet-medium interactions, resonance decays, or a
-SMASH/UrQMD hadronic afterburner.
+SMASH/UrQMD hadronic afterburner. The finite-volume solver is first order and
+diffusive: it reproduces the analytic Gubser flow to about 10% (L1) at
+`dx=0.1 fm` and converges at first order.
 
 ## Quick start
 
@@ -93,6 +105,28 @@ To select a particular Python installation:
 
 ```powershell
 .\setup.ps1 -PythonExe "C:\Path\To\python.exe"
+```
+
+### Linux and macOS
+
+The `run_*.ps1` launchers are thin wrappers around `python -m hic.<module>`,
+so every tool also runs directly from the repository root:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt -r requirements-cpu.txt
+python -m hic.hydro_validation --cpu
+python -m hic.blender_event_pipeline --cpu
+```
+
+Use `requirements-cuda.txt` instead of `requirements-cpu.txt` on a Linux
+machine with CUDA 12.8. On macOS, install `torch==2.11.0` from PyPI instead of
+either file. Build the Blender scene from the event cache with:
+
+```bash
+blender --background --python-exit-code 1 --python tools/blender_hic_scene.py -- \
+  --cache outputs/blender_physics_event.npz --output outputs/hic_blender_physics_scene.blend
 ```
 
 ## Reproduce the Blender result
@@ -164,8 +198,11 @@ Run the hydrodynamic validation suite:
 .\run_hydro_validation.ps1 --output outputs\hydro_validation.csv
 ```
 
-It checks uniform rest and boosted states, Gaussian-fireball conservation,
-analytic Bjorken cooling, and crossover-EoS substep convergence. Additional
+It checks uniform rest and boosted states, energy conservation of a Gaussian
+fireball including boundary outflow, analytic Bjorken cooling, crossover-EoS
+substep convergence, and the analytic Gubser flow at two resolutions. The
+Gubser test requires first-order convergence, which a wrong coupling between
+transverse flow and longitudinal expansion cannot reach. Additional
 benchmarks are available through:
 
 ```powershell
@@ -176,6 +213,24 @@ benchmarks are available through:
 The Blender event generator also writes
 `outputs\blender_physics_event.audit.json` and exits unsuccessfully if its
 causality, monotonicity, Landau-handoff, freeze-out, or particle checks fail.
+
+Check the equation-of-state table, or a table of your own, for thermodynamic
+consistency:
+
+```powershell
+.\.venv\Scripts\python.exe -m hic.eos --eos-table data\eos_table.csv
+```
+
+The automated tests cover the EoS, the hydrodynamic solver, Landau matching,
+the Glauber and Cooper-Frye samplers, every command-line tool, the desktop
+apps in headless mode, and the reference event. GitHub Actions runs them on
+Linux (Python 3.11 and 3.13) and runs `setup.ps1` and the launchers on
+Windows. Run them locally with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest
+```
 
 ## Other entry points
 
@@ -195,17 +250,20 @@ causality, monotonicity, Landau-handoff, freeze-out, or particle checks fail.
 ## Repository layout
 
 ```text
-data/                       compact crossover EoS table
+data/                       compact crossover EoS table and its description
 docs/                       model notes
 hic/                        numerical models and applications
+tests/                      pytest suite, including the reference-event regression
 tools/blender_hic_scene.py  cache-to-Blender scene builder
 run_*.ps1                   reproducible Windows entry points
+.github/workflows/          continuous integration on Linux and Windows
 outputs/                    generated caches, reports, scenes, images, and video
 ```
 
 ## Model references
 
 - [Free-streaming approximation and Landau matching](https://arxiv.org/abs/0812.3393)
+- [Gubser flow, the analytic solution used for validation](https://arxiv.org/abs/1006.0006)
 - [Universal early transverse flow](https://arxiv.org/abs/0810.4325)
 - [KoMPoST kinetic pre-equilibrium framework](https://arxiv.org/abs/1805.00961)
 - [Cooper-Frye particlization](https://doi.org/10.1103/PhysRevD.10.186)

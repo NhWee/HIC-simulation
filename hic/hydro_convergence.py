@@ -1,33 +1,31 @@
 import argparse
 import csv
+import sys
 from pathlib import Path
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from hic.hydro_validation import build_parser as build_validation_parser
 from hic.hydro_validation import run_validation
 
 
+SCAN_ONLY_OPTIONS = {"grid_sizes", "cfl_values", "output"}
+
+
 def validation_namespace(args: argparse.Namespace, grid_size: int, cfl: float) -> argparse.Namespace:
-    return argparse.Namespace(
-        grid_size=grid_size,
-        extent=args.extent,
-        steps=args.steps,
-        cfl=cfl,
-        eos=args.eos,
-        eos_table=args.eos_table,
-        speed_of_sound2=args.speed_of_sound2,
-        low_speed_of_sound2=args.low_speed_of_sound2,
-        high_speed_of_sound2=args.high_speed_of_sound2,
-        transition_energy=args.transition_energy,
-        transition_width=args.transition_width,
-        energy_floor=args.energy_floor,
-        tau0=args.tau0,
-        boost_velocity=args.boost_velocity,
-        gaussian_sigma=args.gaussian_sigma,
-        uniform_tolerance=args.uniform_tolerance,
-        gaussian_energy_tolerance=args.gaussian_energy_tolerance,
-        bjorken_tolerance=args.bjorken_tolerance,
-        cpu=args.cpu,
-        output=Path("NUL"),
-    )
+    """Validation settings for one scan point.
+
+    Starts from the validation parser defaults, so options added to the
+    validation suite are always present, then applies this scan's options.
+    """
+    namespace = build_validation_parser().parse_args([])
+    for key, value in vars(args).items():
+        if key not in SCAN_ONLY_OPTIONS:
+            setattr(namespace, key, value)
+    namespace.grid_size = grid_size
+    namespace.cfl = cfl
+    return namespace
 
 
 def run_scan(args: argparse.Namespace) -> list[dict[str, float | str]]:
@@ -59,7 +57,7 @@ def parse_list(text: str | list[str], cast_type: type) -> list:
     return parsed
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run hydro validation over grid-size and CFL scans.")
     parser.add_argument("--grid-sizes", nargs="+", default=["40,60,80"], help="Grid sizes, comma-separated or space-separated.")
     parser.add_argument("--cfl-values", nargs="+", default=["0.15,0.25,0.35"], help="CFL values, comma-separated or space-separated.")
@@ -77,18 +75,29 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--boost-velocity", type=float, default=0.2, help="Uniform boost velocity.")
     parser.add_argument("--gaussian-sigma", type=float, default=2.0, help="Gaussian fireball width.")
     parser.add_argument("--uniform-tolerance", type=float, default=1.0e-6, help="Uniform test tolerance.")
-    parser.add_argument("--gaussian-energy-tolerance", type=float, default=2.0e-3, help="Gaussian energy drift tolerance.")
+    parser.add_argument(
+        "--gaussian-energy-tolerance",
+        type=float,
+        default=1.0e-4,
+        help="Gaussian energy-conservation tolerance (boundary outflow included).",
+    )
     parser.add_argument("--bjorken-tolerance", type=float, default=1.0e-5, help="Bjorken analytic tolerance.")
+    parser.add_argument(
+        "--crossover-bjorken-tolerance",
+        type=float,
+        default=5.0e-3,
+        help="Coarse/fine relative tolerance for crossover Bjorken cooling.",
+    )
     parser.add_argument("--cpu", action="store_true", help="Force CPU execution.")
     parser.add_argument("--output", type=Path, default=Path("outputs/hydro_convergence.csv"), help="Output CSV path.")
-    parsed = parser.parse_args()
+    parsed = parser.parse_args(argv)
     parsed.grid_sizes = parse_list(parsed.grid_sizes, int)
     parsed.cfl_values = parse_list(parsed.cfl_values, float)
     return parsed
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     rows = run_scan(args)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = sorted({key for row in rows for key in row.keys()})

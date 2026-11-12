@@ -96,7 +96,7 @@ def run_shock_tube(args: argparse.Namespace) -> tuple[list[dict[str, float]], di
     return rows, diagnostics
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a relativistic ideal-hydro shock-tube benchmark.")
     parser.add_argument("--grid-size", type=int, default=200, help="2D grid size; the center row is written as 1D output.")
     parser.add_argument("--extent", type=float, default=10.0, help="Half-width of the domain.")
@@ -115,11 +115,11 @@ def parse_args() -> argparse.Namespace:
         default=Path("outputs/hydro_shock_tube_diagnostics.csv"),
         help="Output diagnostics CSV path.",
     )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     rows, diagnostics = run_shock_tube(args)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.diagnostics_output.parent.mkdir(parents=True, exist_ok=True)
