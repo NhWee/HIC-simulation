@@ -20,10 +20,10 @@ The reference event is Au+Au at `sqrt(sNN)=200 GeV`, `b=5.7 fm`, seed 17.
 The bright interior is the hydrodynamic temperature field, the highlighted
 core is `T>=165 MeV`, and the outer contour marks `Tsw=145 MeV`.
 
-The images were rendered before the corrections described in
-[REPRODUCIBILITY.md](REPRODUCIBILITY.md#corrections-in-this-revision). A new
-render shows the same geometry with lower temperatures (at most 280 MeV
-instead of 370 MeV after hydrodynamization) and a smaller `T>=165 MeV` core.
+The images show the corrected event described in
+[REPRODUCIBILITY.md](REPRODUCIBILITY.md#corrections-in-this-revision). The
+on-screen diagnostics match the reference audit; for example, the field peaks
+at 280 MeV right after hydrodynamization.
 
 | Collisionless pre-equilibrium | Sampled hadrons after particlization |
 | --- | --- |

@@ -10,7 +10,10 @@ NumPy 2.4.4, and PyTorch 2.15.0 on Linux. The Linux jobs in
 `.github/workflows/tests.yml` check them against the pinned PyTorch 2.11.0
 CPU build through `tests/test_reference_event.py`.
 
-The Blender result was last rendered with:
+The README images were re-rendered from this revision's CPU reference cache
+with the Blender 5.1.2 Python module (`bpy` from PyPI) in background mode on
+Linux, using Mesa software OpenGL, and scaled from 1280 x 720 to 1024 x 576.
+The 13-second animation was last rendered, before the corrections below, with:
 
 - Windows, PowerShell
 - Python 3.13.3
