@@ -1,0 +1,74 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Linux, Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install Qt runtime libraries for the headless PySide tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - name: Install Python dependencies (CPU PyTorch)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-cpu.txt -r requirements-dev.txt
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest
+      - name: Run the hydrodynamics validation suite
+        run: python -m hic.hydro_validation --cpu --output outputs/hydro_validation.csv
+      - name: Check the EoS table
+        run: python -m hic.eos --eos-table data/eos_table.csv
+
+  windows:
+    name: Windows setup and launchers
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Create the project environment with setup.ps1
+        shell: pwsh
+        run: .\setup.ps1 -Cpu -PythonExe python
+      - name: Run tests in the project environment
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+          .\.venv\Scripts\python.exe -m pytest
+      - name: Run the validation launcher
+        shell: pwsh
+        run: .\run_hydro_validation.ps1 --cpu --output outputs\hydro_validation.csv
+      - name: Check that launchers report failures
+        shell: pwsh
+        run: |
+          .\run_centrality_analysis.ps1 --input outputs\missing.csv
+          if ($LASTEXITCODE -eq 0) { throw "run_centrality_analysis.ps1 returned 0 for a failing run" }
+          Write-Host "Launcher returned exit code $LASTEXITCODE as expected."
+          exit 0

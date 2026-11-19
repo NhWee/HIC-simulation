@@ -55,15 +55,15 @@ def analyze(args: argparse.Namespace) -> dict[str, float]:
     }
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Analyze an event-pipeline summary CSV.")
     parser.add_argument("--input", type=Path, default=Path("outputs/pipeline_summary.csv"), help="Pipeline summary CSV.")
     parser.add_argument("--output", type=Path, default=Path("outputs/pipeline_analysis.csv"), help="Analysis output CSV.")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     if not args.input.exists():
         raise SystemExit(f"Pipeline summary not found: {args.input}")
     summary = analyze(args)

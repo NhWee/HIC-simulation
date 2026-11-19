@@ -1,5 +1,6 @@
 import argparse
 import csv
+import math
 import sys
 from pathlib import Path
 
@@ -49,17 +50,21 @@ def primitive_from_conserved(
         #   v = |M| / (T00 + p(e)),  e = T00 - |M| v
         # by fixed-point iteration. Using a constant sound speed here makes the
         # recovered primitive state inconsistent with the pressure flux.
+        # The map v -> |M| / (T00 + p(T00 - |M| v)) is increasing with slope
+        # v^2 cs2 < 1 at the solution, so the plain iteration converges
+        # monotonically; 16 steps reach float32 roundoff for v <= 0.95. (A 0.5
+        # damping used earlier slowed the contraction to ~0.67 per step and
+        # left errors of up to 3% in e after 12 steps.)
         pressure_guess = eos.pressure(energy)
         velocity = torch.clamp(momentum / torch.clamp(energy + pressure_guess, min=energy_floor), 0.0, 0.999)
-        for _ in range(12):
+        for _ in range(16):
             energy_guess = torch.clamp(energy - momentum * velocity, min=energy_floor)
             pressure_guess = eos.pressure(energy_guess)
-            updated_velocity = torch.clamp(
+            velocity = torch.clamp(
                 momentum / torch.clamp(energy + pressure_guess, min=energy_floor),
                 min=0.0,
                 max=0.999,
             )
-            velocity = 0.5 * (velocity + updated_velocity)
         velocity = torch.where(small, torch.zeros_like(velocity), velocity)
 
     energy_density = torch.clamp(energy - momentum * velocity, min=energy_floor)
@@ -95,23 +100,56 @@ def apply_bjorken_cooling(
     eos: EquationOfState,
     energy_floor: float,
 ) -> torch.Tensor:
-    energy_density, pressure, velocity_x, velocity_y = primitive_from_conserved(
-        state[0], state[1], state[2], eos, energy_floor
+    """Integrate the boost-invariant (Milne) geometric source terms over [tau, tau + dt].
+
+    For E = T^{tau tau} and M_i = T^{tau i} the 2+1D conservation laws are
+
+        d_tau E   + d_i M_i    = -(E + p) / tau,
+        d_tau M_j + d_i T^{ij} = -M_j / tau.
+
+    This is the source half of the operator split. ``tau * M_j`` is constant
+    during the source step, so the momentum update is exact. ``tau * E`` obeys
+    d(tau E)/d ln(tau) = -tau * p(e(E, M)), which is integrated with classical
+    fourth-order Runge-Kutta in ln(tau). For a fluid at rest this reduces to
+    de/dtau = -(e + p)/tau, e.g. e ~ tau^-(1 + cs2) for a conformal EoS.
+
+    Earlier versions cooled e at fixed velocity. That is only correct for v = 0:
+    it damps transverse momentum as tau^-(1 + cs2) instead of tau^-1 and
+    suppresses radial and elliptic flow.
+    """
+    start_tau = max(float(tau), 1.0e-8)
+    end_tau = start_tau + max(float(dt), 0.0)
+    if end_tau <= start_tau:
+        return state
+    step = math.log(end_tau / start_tau)
+    start_log_tau = math.log(start_tau)
+    scaled_momentum_x = start_tau * state[1]
+    scaled_momentum_y = start_tau * state[2]
+
+    def rate(log_tau: float, scaled_energy: torch.Tensor) -> torch.Tensor:
+        current_tau = math.exp(log_tau)
+        _, pressure, _, _ = primitive_from_conserved(
+            scaled_energy / current_tau,
+            scaled_momentum_x / current_tau,
+            scaled_momentum_y / current_tau,
+            eos,
+            energy_floor,
+        )
+        return -current_tau * pressure
+
+    scaled_energy = start_tau * state[0]
+    k1 = rate(start_log_tau, scaled_energy)
+    k2 = rate(start_log_tau + 0.5 * step, scaled_energy + 0.5 * step * k1)
+    k3 = rate(start_log_tau + 0.5 * step, scaled_energy + 0.5 * step * k2)
+    k4 = rate(start_log_tau + step, scaled_energy + step * k3)
+    scaled_energy = scaled_energy + step * (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0
+    return torch.stack(
+        (
+            torch.clamp(scaled_energy / end_tau, min=energy_floor),
+            scaled_momentum_x / end_tau,
+            scaled_momentum_y / end_tau,
+        )
     )
-    if eos.kind == "conformal":
-        cooling = eos.bjorken_cooling_factor(tau, dt)
-        cooled_energy_density = energy_density * cooling
-    else:
-        # Second-order update of de/dtau = -(e + p(e)) / tau.
-        start_tau = max(tau, 1.0e-8)
-        end_tau = max(tau + dt, 1.0e-8)
-        start_rate = -(energy_density + pressure) / start_tau
-        predicted_energy = torch.clamp(energy_density + dt * start_rate, min=energy_floor)
-        predicted_pressure = eos.pressure(predicted_energy)
-        end_rate = -(predicted_energy + predicted_pressure) / end_tau
-        cooled_energy_density = energy_density + 0.5 * dt * (start_rate + end_rate)
-    cooled_energy_density = torch.clamp(cooled_energy_density, min=energy_floor)
-    return conserved_from_primitive(cooled_energy_density, velocity_x, velocity_y, eos)
 
 
 def fluxes(
@@ -140,13 +178,16 @@ def fluxes(
     return flux_x, flux_y, velocity_x, velocity_y
 
 
-def rusanov_step(
+def rusanov_interface_fluxes(
     state: torch.Tensor,
-    dx: float,
-    dt: float,
     eos: EquationOfState,
     energy_floor: float,
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Rusanov fluxes on the x and y cell interfaces.
+
+    ``interface_x[:, j, i]`` is the flux between cells (j, i) and (j, i + 1);
+    ``interface_y[:, j, i]`` is the flux between cells (j, i) and (j + 1, i).
+    """
     flux_x, flux_y, velocity_x, velocity_y = fluxes(state, eos, energy_floor)
     sound_speed = eos.max_sound_speed()
 
@@ -167,7 +208,39 @@ def rusanov_step(
     signal_y = (abs_velocity_y + sound_speed) / (1.0 + abs_velocity_y * sound_speed)
     speed_y = torch.maximum(signal_y[:-1, :], signal_y[1:, :])
     interface_y = 0.5 * (flux_bottom + flux_top) - 0.5 * speed_y.unsqueeze(0) * (top - bottom)
+    return interface_x, interface_y
 
+
+def boundary_outflow(interface_x: torch.Tensor, interface_y: torch.Tensor, dx: float, dt: float) -> torch.Tensor:
+    """Conserved quantities that leave the grid in one ``rusanov_step``.
+
+    The outermost cells are held fixed, so the update telescopes to the fluxes
+    through the first and last interior interfaces.
+    """
+    through_x = torch.sum(interface_x[:, :, -1] - interface_x[:, :, 0], dim=1)
+    through_y = torch.sum(interface_y[:, -1, :] - interface_y[:, 0, :], dim=1)
+    return dt * dx * (through_x + through_y)
+
+
+def rusanov_step(
+    state: torch.Tensor,
+    dx: float,
+    dt: float,
+    eos: EquationOfState,
+    energy_floor: float,
+) -> torch.Tensor:
+    interface_x, interface_y = rusanov_interface_fluxes(state, eos, energy_floor)
+    return apply_interface_fluxes(state, interface_x, interface_y, dx, dt, energy_floor)
+
+
+def apply_interface_fluxes(
+    state: torch.Tensor,
+    interface_x: torch.Tensor,
+    interface_y: torch.Tensor,
+    dx: float,
+    dt: float,
+    energy_floor: float,
+) -> torch.Tensor:
     next_state = state.clone()
     next_state[:, :, 1:-1] -= dt / dx * (interface_x[:, :, 1:] - interface_x[:, :, :-1])
     next_state[:, 1:-1, :] -= dt / dx * (interface_y[:, 1:, :] - interface_y[:, :-1, :])
@@ -348,7 +421,7 @@ def run_hydro(args: argparse.Namespace) -> tuple[list[dict[str, float]], list[di
     return rows, freezeout_rows
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a conservative 2+1D ideal hydrodynamics prototype.")
     parser.add_argument("--grid-size", type=int, default=120, help="2D transverse grid size.")
     parser.add_argument("--extent", type=float, default=12.0, help="Half-width of the transverse plane in fm-like units.")
@@ -383,11 +456,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--freezeout-energy", type=float, default=0.35, help="Energy-density threshold for freeze-out candidates.")
     parser.add_argument("--freezeout-temperature", type=float, default=0.145, help="Fallback freeze-out temperature for non-tabulated EoS.")
     parser.add_argument("--freezeout-output", type=Path, default=None, help="Optional output CSV for freeze-out candidate cells.")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     rows, freezeout_rows = run_hydro(args)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [

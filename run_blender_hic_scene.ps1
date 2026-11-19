@@ -48,10 +48,10 @@ function Resolve-Blender {
         if (-not $Pattern) {
             continue
         }
-        $Matches = Get-ChildItem -Path $Pattern -ErrorAction SilentlyContinue |
+        $Found = Get-ChildItem -Path $Pattern -ErrorAction SilentlyContinue |
             Sort-Object FullName -Descending
-        if ($Matches) {
-            return $Matches[0].FullName
+        if ($Found) {
+            return $Found[0].FullName
         }
     }
 

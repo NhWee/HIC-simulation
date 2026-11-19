@@ -175,7 +175,7 @@ def run_ensemble(args: argparse.Namespace) -> list[dict[str, float]]:
     return sorted(ranked, key=lambda row: row["event"])
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run an event-by-event Monte Carlo Glauber ensemble.")
     parser.add_argument("--events", type=int, default=200, help="Number of Monte Carlo Glauber events.")
     parser.add_argument("--grid-size", type=int, default=120, help="2D transverse grid size.")
@@ -197,11 +197,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=7, help="Random seed.")
     parser.add_argument("--cpu", action="store_true", help="Force CPU execution.")
     parser.add_argument("--output", type=Path, default=Path("outputs/glauber_ensemble.csv"), help="Output CSV path.")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     rows = run_ensemble(args)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [

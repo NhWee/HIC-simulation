@@ -147,18 +147,18 @@ def build_report(args: argparse.Namespace) -> go.Figure:
     return fig
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build an interactive HTML report from HIC simulation outputs.")
     parser.add_argument("--hydro", type=Path, default=Path("outputs/ideal_hydro_2d.csv"), help="Hydro diagnostics CSV.")
     parser.add_argument("--freezeout", type=Path, default=Path("outputs/freezeout_surface.csv"), help="Freeze-out surface CSV.")
     parser.add_argument("--particles", type=Path, default=Path("outputs/particles.csv"), help="Sampled particles CSV.")
     parser.add_argument("--pipeline-summary", type=Path, default=Path("outputs/pipeline_summary.csv"), help="Event pipeline summary CSV.")
     parser.add_argument("--output", type=Path, default=Path("outputs/simulation_report.html"), help="Output HTML report.")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     fig = build_report(args)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fig.write_html(args.output, include_plotlyjs=True, full_html=True)

@@ -977,7 +977,7 @@ class PySideHICApp(QtWidgets.QMainWindow):
         self.phase_marker.setPos(state.progress)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a PySide/pyqtgraph heavy-ion collision field simulator.")
     parser.add_argument("--smoke-test", action="store_true", help="Run a non-GUI field computation test.")
     parser.add_argument("--physics-audit", action="store_true", help="Check centrality, phase ordering, and hadron yields.")
@@ -993,7 +993,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hydro-target-max-energy", type=float, default=28.0, help="Initial max energy density after normalization.")
     parser.add_argument("--hydro-freezeout-energy", type=float, default=0.35, help="Energy density mapped to T_fo in the cache.")
     parser.add_argument("--cpu", action="store_true", help="Force CPU for hydro cache generation.")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def run_physics_audit() -> bool:
@@ -1185,8 +1185,8 @@ def run_visual_audit(cache: HydroFrameCache | None = None) -> bool:
     return True
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     if args.build_hydro_cache:
         output = args.hydro_cache or DEFAULT_HYDRO_CACHE
         generate_hydro_cache(

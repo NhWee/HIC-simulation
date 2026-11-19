@@ -1,6 +1,10 @@
 # 2D heavy-ion collision initial-condition and evolution toy model using PyTorch GPU acceleration.
 # Initial condition:
 #   T_A(x,y,t) and T_B(x,y,t) are moving Woods-Saxon-like thickness profiles.
+#   Smooth mode uses the optical Glauber densities
+#     wounded = T_A (1 - exp(-sigma T_B)) + T_B (1 - exp(-sigma T_A)),
+#     binary  = sigma T_A T_B,
+#   both expressed per grid cell like the Monte Carlo mode.
 #   Optional Monte Carlo Glauber mode samples fluctuating nucleon positions,
 #   tags participants, and deposits binary collision centers.
 #   e0(x,y,t) = norm * [(1-alpha) * wounded + alpha * binary]
@@ -11,7 +15,7 @@
 # grid_size, steps, frame_every, mass_number, radius, skin_depth,
 # impact_parameter, beam_velocity, collision_width, binary_fraction,
 # nucleon_width, inelastic_cross_section, seed, diffusion, radial_expansion,
-# damping, output
+# damping, cpu, output
 import argparse
 import sys
 from pathlib import Path
@@ -239,8 +243,8 @@ def simulate(
         n_coll = int(coll_x.shape[0])
         print(f"MC Glauber event: N_part={n_part}, N_coll={n_coll}")
 
+    cell_area = dx * dx
     for step in range(steps):
-        t = (step - steps * 0.22) * dt
         center_a_x = torch.tensor(-start_offset + beam_velocity * step * dt, device=device)
         center_b_x = torch.tensor(start_offset - beam_velocity * step * dt, device=device)
         center_a_y = torch.tensor(-0.5 * impact_parameter, device=device)
@@ -286,11 +290,14 @@ def simulate(
                 max(n_coll, 1),
             )
         else:
+            # Nucleons per cell; sigma * T needs T per fm^2, hence / cell_area.
             t_a = woods_saxon_thickness(xx, yy, center_a_x, center_a_y, radius, skin_depth, mass_number)
             t_b = woods_saxon_thickness(xx, yy, center_b_x, center_b_y, radius, skin_depth, mass_number)
-            participant_a_thickness = t_a
-            participant_b_thickness = t_b
-            binary = t_a * t_b
+            collision_depth_a = inelastic_cross_section * t_a / cell_area
+            collision_depth_b = inelastic_cross_section * t_b / cell_area
+            participant_a_thickness = t_a * (1.0 - torch.exp(-collision_depth_b))
+            participant_b_thickness = t_b * (1.0 - torch.exp(-collision_depth_a))
+            binary = t_a * collision_depth_b
         overlap_time = torch.exp(-(center_a_x - center_b_x) ** 2 / max(collision_width * collision_width, 1.0e-6))
         wounded = participant_a_thickness + participant_b_thickness
         source = norm * ((1.0 - binary_fraction) * wounded + binary_fraction * binary) * overlap_time
@@ -414,7 +421,7 @@ def build_figure(
     return fig
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a 2D heavy-ion collision initial condition/evolution toy model.")
     parser.add_argument("--grid-size", type=int, default=180, help="2D transverse grid size.")
     parser.add_argument("--extent", type=float, default=12.0, help="Half-width of the transverse plane in fm-like units.")
@@ -439,7 +446,7 @@ def parse_args() -> argparse.Namespace:
         "--inelastic-cross-section",
         type=float,
         default=4.2,
-        help="Nucleon-nucleon inelastic cross section in fm^2 for mc-glauber participant tagging.",
+        help="Nucleon-nucleon inelastic cross section in fm^2 (participant tagging and optical Glauber densities).",
     )
     parser.add_argument("--seed", type=int, default=7, help="Random seed for event-by-event nucleon sampling.")
     parser.add_argument("--norm", type=float, default=2.5, help="Overall energy-density normalization.")
@@ -447,13 +454,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--radial-expansion", type=float, default=0.20, help="Radial expansion strength.")
     parser.add_argument("--damping", type=float, default=0.035, help="Energy-density decay rate.")
     parser.add_argument("--frame-duration-ms", type=int, default=35, help="Animation frame duration in milliseconds.")
+    parser.add_argument("--cpu", action="store_true", help="Force CPU execution.")
     parser.add_argument("--output", type=Path, default=Path("outputs/nuclear_collision_2d.html"), help="Output HTML path.")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
+    device = torch.device("cuda" if torch.cuda.is_available() and not args.cpu else "cpu")
     print(f"Using device: {device}")
     if device.type == "cuda":
         print(f"GPU: {torch.cuda.get_device_name(0)}")

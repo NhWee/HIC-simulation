@@ -1,7 +1,6 @@
 import argparse
 import csv
 import math
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -13,17 +12,29 @@ def read_freezeout_surface(path: Path) -> list[dict[str, float]]:
         return [{key: float(value) for key, value in row.items()} for row in reader]
 
 
-def sample_thermal_pt(rng: np.random.Generator, temperature: float, mass: float, size: int) -> np.ndarray:
-    samples = []
-    max_weight = max(temperature * math.exp(-mass / max(temperature, 1.0e-12)), 1.0e-12)
-    while len(samples) < size:
-        batch = max(256, 4 * (size - len(samples)))
-        pt = rng.exponential(scale=2.0 * temperature, size=batch)
+def sample_thermal_pt_array(rng: np.random.Generator, temperatures: np.ndarray, mass: float) -> np.ndarray:
+    """Draw one p_T per entry of ``temperatures`` from dN/dp_T ~ p_T exp(-m_T / T).
+
+    The proposal p_T ~ Gamma(2, T) has density ~ p_T exp(-p_T / T). Accepting
+    it with probability exp(-(m_T - p_T) / T) <= 1 leaves exactly the target
+    density p_T exp(-m_T / T).
+    """
+    temperature = np.maximum(np.asarray(temperatures, dtype=np.float64), 1.0e-12)
+    result = np.empty(temperature.shape, dtype=np.float64)
+    pending = np.arange(temperature.size)
+    while pending.size:
+        local_temperature = temperature.reshape(-1)[pending]
+        pt = rng.gamma(shape=2.0, scale=local_temperature)
         mt = np.sqrt(pt * pt + mass * mass)
-        accept_prob = pt * np.exp(-mt / max(temperature, 1.0e-12)) / max_weight
-        accepted = pt[rng.random(batch) < np.clip(accept_prob, 0.0, 1.0)]
-        samples.extend(accepted.tolist())
-    return np.asarray(samples[:size], dtype=np.float64)
+        accepted = rng.random(pending.size) < np.exp(-(mt - pt) / local_temperature)
+        result.reshape(-1)[pending[accepted]] = pt[accepted]
+        pending = pending[~accepted]
+    return result
+
+
+def sample_thermal_pt(rng: np.random.Generator, temperature: float, mass: float, size: int) -> np.ndarray:
+    """Draw ``size`` values of p_T from dN/dp_T ~ p_T exp(-m_T / T) at one temperature."""
+    return sample_thermal_pt_array(rng, np.full(size, max(float(temperature), 1.0e-6)), mass)
 
 
 def sample_particles(args: argparse.Namespace) -> tuple[list[dict[str, float]], dict[str, float]]:
@@ -45,10 +56,7 @@ def sample_particles(args: argparse.Namespace) -> tuple[list[dict[str, float]], 
     cell_indices = rng.choice(len(surface), size=args.particles, replace=True, p=weights)
     surface_temperatures = np.asarray([row.get("temperature", args.temperature) for row in surface], dtype=np.float64)
     sampled_temperatures = surface_temperatures[cell_indices]
-    local_pt = np.asarray(
-        [sample_thermal_pt(rng, max(float(temperature), 1.0e-6), args.mass, 1)[0] for temperature in sampled_temperatures],
-        dtype=np.float64,
-    )
+    local_pt = sample_thermal_pt_array(rng, np.maximum(sampled_temperatures, 1.0e-6), args.mass)
     local_phi = rng.uniform(0.0, 2.0 * math.pi, size=args.particles)
 
     rows = []
@@ -107,7 +115,7 @@ def sample_particles(args: argparse.Namespace) -> tuple[list[dict[str, float]], 
     return rows, summary
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sample pion-like particles from freeze-out candidate cells.")
     parser.add_argument("--freezeout-surface", type=Path, default=Path("outputs/freezeout_surface.csv"), help="Freeze-out surface CSV.")
     parser.add_argument("--particles", type=int, default=10000, help="Number of sampled particles.")
@@ -117,11 +125,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=7, help="Random seed.")
     parser.add_argument("--output", type=Path, default=Path("outputs/particles.csv"), help="Output particle CSV path.")
     parser.add_argument("--summary-output", type=Path, default=Path("outputs/particle_observables.csv"), help="Output summary CSV path.")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     if not args.freezeout_surface.exists():
         raise SystemExit(f"Freeze-out surface not found: {args.freezeout_surface}")
 

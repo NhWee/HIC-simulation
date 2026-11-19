@@ -16,7 +16,7 @@ def read_summary(path: Path) -> dict[str, float]:
     return {key: float(value) for key, value in row.items()}
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a small end-to-end HIC event pipeline.")
     parser.add_argument("--events", type=int, default=3, help="Number of events.")
     parser.add_argument("--particles", type=int, default=2000, help="Particles sampled per event.")
@@ -26,11 +26,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=7, help="Base random seed.")
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/pipeline"), help="Per-event output directory.")
     parser.add_argument("--summary-output", type=Path, default=Path("outputs/pipeline_summary.csv"), help="Aggregated summary CSV.")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     python = sys.executable
     args.output_dir.mkdir(parents=True, exist_ok=True)
     args.summary_output.parent.mkdir(parents=True, exist_ok=True)

@@ -10,7 +10,10 @@ if (-not (Test-Path -LiteralPath $Python)) {
 Push-Location $ProjectRoot
 try {
     & $Python -m hic.nuclear_collision_2d @args
+    $PythonExitCode = $LASTEXITCODE
 }
 finally {
     Pop-Location
 }
+
+exit $PythonExitCode

@@ -317,14 +317,14 @@ class HICSimulatorApp:
         self.root.mainloop()
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run a native desktop educational heavy-ion collision simulator.")
     parser.add_argument("--smoke-test", action="store_true", help="Run a non-GUI logic smoke test.")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     if args.smoke_test:
         state = SimulationState()
         for _ in range(160):

@@ -52,16 +52,16 @@ def analyze(args: argparse.Namespace) -> list[dict[str, float | str]]:
     return [summarize_bin(rows, lower, upper) for lower, upper in bins]
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Analyze Glauber ensemble observables by centrality bin.")
     parser.add_argument("--input", type=Path, default=Path("outputs/glauber_ensemble.csv"), help="Glauber ensemble CSV.")
     parser.add_argument("--bins", default=DEFAULT_BINS, help="Comma-separated centrality bins, e.g. 0-5,5-10,10-20.")
     parser.add_argument("--output", type=Path, default=Path("outputs/centrality_analysis.csv"), help="Output CSV path.")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
-def main() -> None:
-    args = parse_args()
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     if not args.input.exists():
         raise SystemExit(f"Glauber ensemble not found: {args.input}")
     summaries = analyze(args)
