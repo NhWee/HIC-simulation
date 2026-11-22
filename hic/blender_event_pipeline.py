@@ -1216,7 +1216,10 @@ def physics_audit(
             and (args.particles <= 0 or particles.primaries == args.particles)
             and abs(entropy_ratio - 1.0) < 0.05
             and float(np.min(particles.cooper_frye_weight)) >= 0.0
-            and temperature_rises <= 1
+            # Converging transverse flow (e.g. a cold hole between hot spots filling in) can compress and
+            # reheat the fluid, so the hottest cell need not cool monotonically. What ideal hydro with
+            # expansion cannot do is exceed the initial peak: that would signal an instability.
+            and float(np.max(hydro.max_temperature)) <= float(hydro.max_temperature[0]) + 2.0e-3
             and np.all(np.diff(preequilibrium.tau) > 0.0)
             and float(np.max(preequilibrium_speed)) < 1.0
             and int(np.count_nonzero(np.diff(preequilibrium_peak_energy) > 1.0e-3)) == 0
@@ -1250,6 +1253,7 @@ def physics_audit(
         "final_max_temperature_gev": float(hydro.max_temperature[-1]),
         "max_transverse_velocity": float(np.max(hydro.max_velocity)),
         "max_temperature_rise_count": temperature_rises,
+        "max_temperature_excess_over_initial_gev": float(np.max(hydro.max_temperature) - hydro.max_temperature[0]),
         "freezeout_cells": int(surface.tau.size),
         "freezeout_heating_elements": int(np.count_nonzero(surface.heating)),
         "sampled_primaries": particles.primaries,
