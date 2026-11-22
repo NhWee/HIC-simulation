@@ -24,7 +24,7 @@ from hic.ideal_hydro_2d import (
     conserved_from_primitive,
     conserved_totals,
     primitive_from_conserved,
-    rusanov_step,
+    hydro_step,
 )
 from hic.nuclear_collision_2d import make_grid
 
@@ -56,7 +56,7 @@ def run_shock_tube(args: argparse.Namespace) -> tuple[list[dict[str, float]], di
     dt = args.cfl * dx / max(1.0, eos.max_sound_speed())
 
     for _ in range(args.steps):
-        state = rusanov_step(state, dx, dt, eos, args.energy_floor)
+        state = hydro_step(state, 1.0, dt, dx, eos, args.energy_floor, solver=args.solver, bjorken=False)
 
     energy_density, pressure, velocity_x, velocity_y = primitive_from_conserved(
         state[0], state[1], state[2], eos, args.energy_floor
@@ -104,6 +104,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cfl", type=float, default=0.2, help="Courant factor.")
     add_eos_arguments(parser)
     parser.add_argument("--energy-floor", type=float, default=1.0e-8, help="Minimum energy density.")
+    parser.add_argument(
+        "--solver",
+        choices=("kt", "rusanov"),
+        default="kt",
+        help="Transport scheme: second-order Kurganov-Tadmor (default) or the first-order Rusanov update.",
+    )
     parser.add_argument("--left-energy-density", type=float, default=10.0, help="Left-state energy density.")
     parser.add_argument("--right-energy-density", type=float, default=1.0, help="Right-state energy density.")
     parser.add_argument("--discontinuity-x", type=float, default=0.0, help="Initial discontinuity location.")

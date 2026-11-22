@@ -25,6 +25,7 @@ from hic.ideal_hydro_2d import (
     conserved_from_primitive,
     conserved_totals,
     primitive_from_conserved,
+    hydro_step,
     rusanov_step,
 )
 from hic.nuclear_collision_2d import make_grid
@@ -39,12 +40,11 @@ def evolve(
     energy_floor: float,
     bjorken_expansion: bool = False,
     tau0: float = 0.6,
+    solver: str = "kt",
 ) -> torch.Tensor:
     dt = cfl * dx / max(1.0, eos.max_sound_speed())
     for step in range(steps):
-        state = rusanov_step(state, dx, dt, eos, energy_floor)
-        if bjorken_expansion:
-            state = apply_bjorken_cooling(state, tau0 + step * dt, dt, eos, energy_floor)
+        state = hydro_step(state, tau0 + step * dt, dt, dx, eos, energy_floor, solver=solver, bjorken=bjorken_expansion)
     return state
 
 
@@ -54,7 +54,7 @@ def uniform_rest_test(args: argparse.Namespace, device: torch.device) -> dict[st
     energy_density = torch.full((args.grid_size, args.grid_size), 1.0, device=device)
     velocity = torch.zeros_like(energy_density)
     initial = conserved_from_primitive(energy_density, velocity, velocity, eos)
-    final = evolve(initial, dx, args.steps, args.cfl, eos, args.energy_floor)
+    final = evolve(initial, dx, args.steps, args.cfl, eos, args.energy_floor, solver=args.solver)
     max_abs_delta = float(torch.max(torch.abs(final - initial)).detach().cpu())
     return {
         "test": "uniform_rest",
@@ -72,7 +72,7 @@ def uniform_boost_test(args: argparse.Namespace, device: torch.device) -> dict[s
     velocity_x = torch.full_like(energy_density, args.boost_velocity)
     velocity_y = torch.zeros_like(energy_density)
     initial = conserved_from_primitive(energy_density, velocity_x, velocity_y, eos)
-    final = evolve(initial, dx, args.steps, args.cfl, eos, args.energy_floor)
+    final = evolve(initial, dx, args.steps, args.cfl, eos, args.energy_floor, solver=args.solver)
     max_abs_delta = float(torch.max(torch.abs(final - initial)).detach().cpu())
     return {
         "test": "uniform_boost",
@@ -90,7 +90,7 @@ def gaussian_energy_test(args: argparse.Namespace, device: torch.device) -> dict
     energy_density = args.energy_floor + torch.exp(-r2 / (2.0 * args.gaussian_sigma * args.gaussian_sigma))
     velocity = torch.zeros_like(energy_density)
     initial = conserved_from_primitive(energy_density, velocity, velocity, eos)
-    final = evolve(initial, dx, args.steps, args.cfl, eos, args.energy_floor)
+    final = evolve(initial, dx, args.steps, args.cfl, eos, args.energy_floor, solver=args.solver)
     initial_energy, initial_px, initial_py = conserved_totals(initial, dx)
     final_energy, final_px, final_py = conserved_totals(final, dx)
     relative_energy_drift = abs(final_energy - initial_energy) / max(abs(initial_energy), 1.0e-12)
@@ -129,6 +129,7 @@ def bjorken_uniform_cooling_test(args: argparse.Namespace, device: torch.device)
         args.energy_floor,
         bjorken_expansion=True,
         tau0=args.tau0,
+        solver=args.solver,
     )
     final_energy_density, _, _, _ = primitive_from_conserved(
         final[0], final[1], final[2], eos, args.energy_floor
@@ -169,6 +170,7 @@ def bjorken_crossover_convergence_test(args: argparse.Namespace, device: torch.d
         args.energy_floor,
         bjorken_expansion=True,
         tau0=args.tau0,
+        solver=args.solver,
     )
     reference = evolve(
         initial,
@@ -179,6 +181,7 @@ def bjorken_crossover_convergence_test(args: argparse.Namespace, device: torch.d
         args.energy_floor,
         bjorken_expansion=True,
         tau0=args.tau0,
+        solver=args.solver,
     )
     coarse_energy, _, _, _ = primitive_from_conserved(coarse[0], coarse[1], coarse[2], eos, args.energy_floor)
     reference_energy, _, _, _ = primitive_from_conserved(
@@ -232,6 +235,7 @@ def gubser_flow_error(
     q: float,
     compare_radius: float,
     device: torch.device,
+    solver: str = "kt",
 ) -> tuple[float, float]:
     """Evolve Gubser initial data with the production update and return L-infinity errors.
 
@@ -253,8 +257,7 @@ def gubser_flow_error(
     tau = tau0
     while tau < tau_end - 1.0e-12:
         dt = min(cfl * dx, tau_end - tau)
-        state = rusanov_step(state, dx, dt, eos, energy_floor)
-        state = apply_bjorken_cooling(state, tau, dt, eos, energy_floor)
+        state = hydro_step(state, tau, dt, dx, eos, energy_floor, solver=solver)
         tau += dt
     energy_density, _, velocity_x, velocity_y = primitive_from_conserved(
         state[0], state[1], state[2], eos, energy_floor
@@ -264,6 +267,11 @@ def gubser_flow_error(
     energy_error = torch.max(torch.abs(energy_density - exact_energy)[inside]) / torch.max(exact_energy[inside])
     velocity_error = torch.max(torch.hypot(velocity_x - exact_vx, velocity_y - exact_vy)[inside])
     return float(energy_error.cpu()), float(velocity_error.cpu())
+
+
+# Default Gubser tolerances (L-infinity of epsilon, of v) on the default 160^2 grid. Measured errors:
+# Kurganov-Tadmor 0.012 / 0.0018 (second order), Rusanov 0.154 / 0.024 (first order).
+GUBSER_TOLERANCE = {"kt": (0.02, 0.005), "rusanov": (0.18, 0.03)}
 
 
 def gubser_flow_test(args: argparse.Namespace, device: torch.device) -> dict[str, float | str]:
@@ -276,13 +284,18 @@ def gubser_flow_test(args: argparse.Namespace, device: torch.device) -> dict[str
         args.gubser_q,
         args.gubser_radius,
         device,
+        solver=args.solver,
     )
-    passed = energy_error <= args.gubser_tolerance and velocity_error <= args.gubser_velocity_tolerance
+    tolerance = args.gubser_tolerance if args.gubser_tolerance is not None else GUBSER_TOLERANCE[args.solver][0]
+    velocity_tolerance = (
+        args.gubser_velocity_tolerance if args.gubser_velocity_tolerance is not None else GUBSER_TOLERANCE[args.solver][1]
+    )
+    passed = energy_error <= tolerance and velocity_error <= velocity_tolerance
     return {
         "test": "gubser_flow",
         "metric": "linf_relative_energy_density_error",
         "value": energy_error,
-        "tolerance": args.gubser_tolerance,
+        "tolerance": tolerance,
         "status": "PASS" if passed else "FAIL",
         "velocity_linf_error": velocity_error,
     }
@@ -343,12 +356,20 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--gubser-tolerance",
         type=float,
-        default=0.18,
-        help="L-infinity relative energy-density tolerance for Gubser flow. The first-order Rusanov "
-        "update gives ~0.15 on the default grid and converges at first order.",
+        default=None,
+        help="L-infinity relative energy-density tolerance for Gubser flow (default: 0.02 for kt, 0.18 for rusanov).",
     )
     parser.add_argument(
-        "--gubser-velocity-tolerance", type=float, default=0.03, help="L-infinity velocity tolerance for Gubser flow."
+        "--gubser-velocity-tolerance",
+        type=float,
+        default=None,
+        help="L-infinity velocity tolerance for Gubser flow (default: 0.005 for kt, 0.03 for rusanov).",
+    )
+    parser.add_argument(
+        "--solver",
+        choices=("kt", "rusanov"),
+        default="kt",
+        help="Transport scheme: second-order Kurganov-Tadmor (default) or the first-order Rusanov update.",
     )
     parser.add_argument("--cpu", action="store_true", help="Force CPU execution.")
     parser.add_argument("--output", type=Path, default=Path("outputs/hydro_validation.csv"), help="Output CSV path.")

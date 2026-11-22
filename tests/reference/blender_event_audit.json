@@ -67,23 +67,23 @@
       "rel": 0.001
     },
     "final_max_temperature_gev": {
-      "value": 0.14493577182292938,
+      "value": 0.14478705823421478,
       "rel": 0.01
     },
     "max_transverse_velocity": {
-      "value": 0.9764009714126587,
+      "value": 0.9904825687408447,
       "rel": 0.01
     },
     "hydro_snapshots": {
-      "value": 71,
+      "value": 81,
       "rel": 0.03
     },
     "freezeout_cells": {
-      "value": 4667,
+      "value": 50695,
       "rel": 0.02
     },
     "freezeout_heating_elements": {
-      "value": 93,
+      "value": 11810,
       "rel": 0.15
     },
     "entropy_at_tau0_above_tsw": {
@@ -91,23 +91,23 @@
       "rel": 0.001
     },
     "entropy_flux_ratio": {
-      "value": 0.9764493227388862,
+      "value": 0.9937990779604331,
       "abs": 0.01
     },
     "dnch_deta": {
-      "value": 63.96669052339647,
+      "value": 70.7559633965219,
       "rel": 0.03
     },
     "dn_dy_pion": {
-      "value": 98.17654825206691,
+      "value": 108.48198940022165,
       "rel": 0.03
     },
     "dn_dy_kaon": {
-      "value": 23.150598856326546,
+      "value": 25.202974243853113,
       "rel": 0.04
     },
     "dn_dy_baryon": {
-      "value": 9.705213121353703,
+      "value": 10.713814430470178,
       "rel": 0.06
     },
     "hrg_to_eos_entropy_ratio_at_tsw": {
@@ -115,15 +115,15 @@
       "rel": 1e-06
     },
     "mean_pt_charged_pion_gev": {
-      "value": 0.40509265076969814,
+      "value": 0.4103215310553407,
       "rel": 0.02
     },
     "mean_pt_charged_kaon_gev": {
-      "value": 0.5422846838069729,
+      "value": 0.5530411903114577,
       "rel": 0.03
     },
     "mean_pt_proton_antiproton_gev": {
-      "value": 0.7221626839895869,
+      "value": 0.7679733952139343,
       "rel": 0.04
     },
     "sampled_primaries": {
@@ -131,15 +131,15 @@
       "exact": true
     },
     "mean_pt_gev": {
-      "value": 0.44381611623814987,
+      "value": 0.45142594136528885,
       "rel": 0.02
     },
     "v2_reaction_plane": {
-      "value": 0.010465169343315456,
+      "value": 0.018442211751598023,
       "abs": 0.004
     },
     "v3_reaction_plane": {
-      "value": 0.006688911200779296,
+      "value": 0.004736379608853622,
       "abs": 0.004
     }
   }

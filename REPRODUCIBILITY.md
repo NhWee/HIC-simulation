@@ -106,8 +106,9 @@ For seed 17 and `b=5.7 fm`, the reference run produced the values below. The
 same values, with per-observable tolerances, are stored in
 `tests/reference/blender_event_audit.json` and checked by `python -m pytest`
 (CPU). The values reflect the exact Milne source terms (ROADMAP P0-3), the
-HotQCD lattice equation of state (P0-1) and the isotherm-crossing freeze-out
-surface (P0-4), and the hadron resonance gas with decays (P2-2). The sampled v2 has a single-sample
+HotQCD lattice equation of state (P0-1), the (tau, x, y)-cube freeze-out
+surface (P0-4, P1-3), the hadron resonance gas with decays (P2-2) and the
+second-order Kurganov-Tadmor solver (P1-1). The sampled v2 has a single-sample
 Monte Carlo spread of about 0.004.
 
 ```text
@@ -120,14 +121,14 @@ energy-weighted handoff pre-flow            0.14869 c
 Landau eigen-equation residual              3.54e-7
 handoff temperature L-infinity error        2.38e-07 GeV (T >= Tsw medium)
 QGP-core cells at hydrodynamization         3594
-freeze-out surface elements                 4667 (93 heating)
-hadrons drawn at the surface               900 (1315 after decays)
-mean pT, charged, after decays              0.4438 GeV
-mean pT of charged pi / K / p                0.405 / 0.542 / 0.722 GeV
-v2 relative to the reaction plane           0.0105
+freeze-out surface elements                 50695 (11810 heating)
+hadrons drawn at the surface               900 (1303 after decays)
+mean pT, charged, after decays              0.4514 GeV
+mean pT of charged pi / K / p                0.410 / 0.553 / 0.768 GeV
+v2 relative to the reaction plane           0.0184
 entropy above Tsw at tau0 (per unit eta)    704.7
-entropy flux / initial entropy              0.976
-charged dN/deta after resonance decays      64.0
+entropy flux / initial entropy              0.994
+charged dN/deta after resonance decays      70.8
 HRG / lattice entropy density at Tsw        0.884
 ```
 

@@ -23,7 +23,7 @@ from hic.ideal_hydro_2d import (
     apply_bjorken_cooling,
     conserved_from_primitive,
     primitive_from_conserved,
-    rusanov_step,
+    hydro_step,
 )
 from hic.nuclear_collision_2d import make_grid, tag_glauber_collisions
 
@@ -515,6 +515,139 @@ def isotherm_crossings(
     }
 
 
+# Corners of a (tau, y, x) cube: index = 4 * time_bit + 2 * y_bit + x_bit.
+_CUBE_CORNERS = [(t, y, x) for t in (0, 1) for y in (0, 1) for x in (0, 1)]
+_CUBE_EDGES = [(a, b) for a in range(8) for b in range(a + 1, 8) if bin(a ^ b).count("1") == 1]
+
+
+def _face_hot_fraction(
+    corners: torch.Tensor, threshold: float, samples: int = 16, first_axis_weight: tuple[float, float] | None = None
+) -> torch.Tensor:
+    """Hot (>= threshold) fraction of a face from its bilinear interpolant; corners (M, 2, 2) in face coordinates.
+
+    With ``first_axis_weight`` = (w0, w1) the fraction is weighted by a factor varying linearly from w0 to w1
+    along the first face coordinate (tau on the side faces, where the Milne measure is tau) and normalized
+    by its mean, so that ``fraction * mean weight * area`` is the weighted hot area.
+    """
+    s = (torch.arange(samples, dtype=corners.dtype, device=corners.device) + 0.5) / samples
+    u = s.view(1, -1, 1)
+    w = s.view(1, 1, -1)
+    c = corners.view(-1, 2, 2, 1, 1)
+    value = (
+        (1 - u) * (1 - w) * c[:, 0, 0] + (1 - u) * w * c[:, 0, 1]
+        + u * (1 - w) * c[:, 1, 0] + u * w * c[:, 1, 1]
+    )
+    hot = (value >= threshold).to(corners.dtype)
+    if first_axis_weight is not None:
+        w0, w1 = first_axis_weight
+        weight = (w0 + (w1 - w0) * u) / (0.5 * (w0 + w1))
+        hot = hot * weight
+    return hot.mean(dim=(1, 2))
+
+
+def _cube_hot_fraction(cube: torch.Tensor, threshold: float, samples: int = 8) -> torch.Tensor:
+    """Hot fraction of a cube's volume from its trilinear interpolant; cube (M, 2, 2, 2) in (t, y, x)."""
+    s = (torch.arange(samples, dtype=cube.dtype, device=cube.device) + 0.5) / samples
+    a = s.view(1, -1, 1, 1)
+    b = s.view(1, 1, -1, 1)
+    c = s.view(1, 1, 1, -1)
+    value = torch.zeros((cube.shape[0], samples, samples, samples), dtype=cube.dtype, device=cube.device)
+    for t in (0, 1):
+        for y in (0, 1):
+            for x in (0, 1):
+                weight = (a if t else 1 - a) * (b if y else 1 - b) * (c if x else 1 - c)
+                value = value + weight * cube[:, t, y, x].view(-1, 1, 1, 1)
+    return (value >= threshold).to(cube.dtype).mean(dim=(1, 2, 3))
+
+
+def isotherm_cubes(
+    previous_temperature: torch.Tensor,
+    temperature: torch.Tensor,
+    threshold: float,
+    previous_tau: float,
+    dt: float,
+    dx: float,
+    previous_velocity: tuple[torch.Tensor, torch.Tensor],
+    velocity: tuple[torch.Tensor, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    """Isotherm surface elements of the (tau, x, y) cubes between two time steps.
+
+    Corners are cell centres at tau and tau + dt. In each cube the hot region H (T >= threshold, from the
+    multilinear interpolant) is bounded by the isotherm S and by the hot parts of the cube's six faces.
+    The closed boundary of H has zero total vector area, so the covariant normal of S, oriented toward
+    the cold side, is
+
+        dsigma_mu(S) = - sum_faces (hot fraction) * (face area) * (outward face normal)_mu + delta_mu^tau V_hot,
+
+    where the last term (the hot coordinate volume) appears because the Milne measure tau varies across
+    the cube. Face areas are tau dx^2 (tau faces) and tau_mid dt dx (x and y faces). Neighbouring cubes share
+    faces and their hot fractions, so the surface closes exactly and its total flux telescopes: folds and
+    flickering crossings inside a cell no longer add spurious area. The fluid velocity, position and time
+    of the element are averages over the points where the isotherm cuts the cube's edges.
+    """
+    t0, t1 = previous_temperature, temperature
+    corner_values = torch.stack([
+        (t0 if t == 0 else t1)[y: y + t0.shape[0] - 1, x: x + t0.shape[1] - 1] for t, y, x in _CUBE_CORNERS
+    ])  # (8, ny - 1, nx - 1)
+    hot = corner_values >= threshold
+    mixed = hot.any(dim=0) & ~hot.all(dim=0)
+    if not bool(torch.any(mixed)):
+        return {}
+    rows, columns = torch.nonzero(mixed, as_tuple=True)
+    temps = corner_values[:, rows, columns].T  # (M, 8)
+
+    def corners_of(field_previous: torch.Tensor, field: torch.Tensor) -> torch.Tensor:
+        return torch.stack([
+            (field_previous if t == 0 else field)[rows + y, columns + x] for t, y, x in _CUBE_CORNERS
+        ], dim=1)
+
+    vx = corners_of(previous_velocity[0], velocity[0])
+    vy = corners_of(previous_velocity[1], velocity[1])
+    cube = temps.view(-1, 2, 2, 2)  # (M, t, y, x)
+    tau_next = previous_tau + dt
+    tau_mid = previous_tau + 0.5 * dt
+    frac_bottom = _face_hot_fraction(cube[:, 0], threshold)
+    frac_top = _face_hot_fraction(cube[:, 1], threshold)
+    tau_weight = (previous_tau, tau_next)  # side faces: Milne measure tau varies along their tau edge
+    frac_x_left = _face_hot_fraction(cube[:, :, :, 0], threshold, first_axis_weight=tau_weight)
+    frac_x_right = _face_hot_fraction(cube[:, :, :, 1], threshold, first_axis_weight=tau_weight)
+    frac_y_low = _face_hot_fraction(cube[:, :, 0, :], threshold, first_axis_weight=tau_weight)
+    frac_y_high = _face_hot_fraction(cube[:, :, 1, :], threshold, first_axis_weight=tau_weight)
+    # Milne measure: the closed boundary of H has vector area int_H d_mu(tau) dV, not zero, which adds the
+    # hot volume to the tau component.
+    hot_volume = _cube_hot_fraction(cube, threshold) * dt * dx * dx
+    d_sigma_tau = -(frac_top * tau_next - frac_bottom * previous_tau) * dx * dx + hot_volume
+    d_sigma_x = -(frac_x_right - frac_x_left) * tau_mid * dt * dx
+    d_sigma_y = -(frac_y_high - frac_y_low) * tau_mid * dt * dx
+
+    # Edge crossings: linear interpolation of position, time and velocity where T = threshold.
+    sums = {key: torch.zeros(rows.numel(), dtype=temps.dtype, device=temps.device) for key in ("t", "y", "x", "vx", "vy", "n")}
+    for a, b in _CUBE_EDGES:
+        ta, tb = temps[:, a], temps[:, b]
+        crosses = (ta >= threshold) != (tb >= threshold)
+        f = torch.where(crosses, (threshold - ta) / torch.where(crosses, tb - ta, torch.ones_like(ta)), torch.zeros_like(ta))
+        f = torch.clamp(f, 0.0, 1.0) * crosses
+        for axis, key in enumerate(("t", "y", "x")):
+            sums[key] += crosses * (_CUBE_CORNERS[a][axis] + f * (_CUBE_CORNERS[b][axis] - _CUBE_CORNERS[a][axis]))
+        sums["vx"] += crosses * (vx[:, a] + f * (vx[:, b] - vx[:, a]))
+        sums["vy"] += crosses * (vy[:, a] + f * (vy[:, b] - vy[:, a]))
+        sums["n"] += crosses
+    count = torch.clamp(sums["n"], min=1.0)
+    return {
+        "row": rows,
+        "column": columns,
+        "x_offset": sums["x"] / count,
+        "y_offset": sums["y"] / count,
+        "tau": previous_tau + dt * sums["t"] / count,
+        "velocity_x": sums["vx"] / count,
+        "velocity_y": sums["vy"] / count,
+        "d_sigma_tau": d_sigma_tau,
+        "d_sigma_x": d_sigma_x,
+        "d_sigma_y": d_sigma_y,
+        "heating": d_sigma_tau < 0.0,
+    }
+
+
 def evolve_hydrodynamics(
     args: argparse.Namespace,
     preequilibrium: PreEquilibriumResult,
@@ -581,8 +714,7 @@ def evolve_hydrodynamics(
     while tau < args.tau_max:
         dt = min(base_dt, args.tau_max - tau)
         previous_tau = tau
-        state = rusanov_step(state, dx, dt, eos, args.energy_floor)
-        state = apply_bjorken_cooling(state, tau=tau, dt=dt, eos=eos, energy_floor=args.energy_floor)
+        state = hydro_step(state, tau, dt, dx, eos, args.energy_floor, solver=args.solver)
         tau += dt
         steps += 1
 
@@ -591,7 +723,7 @@ def evolve_hydrodynamics(
         )
         temperature = physical_temperature(eos, energy_density)
 
-        chunk = isotherm_crossings(
+        chunk = isotherm_cubes(
             previous_temperature,
             temperature,
             args.freezeout_temperature,
@@ -645,7 +777,10 @@ def evolve_hydrodynamics(
         f"Hydro: steps={steps}, snapshots={len(tau_frames)}, "
         f"tau={tau_frames[0]:.3f}->{tau_frames[-1]:.3f} fm/c"
     )
-    element_keys = ("row", "column", "tau", "velocity_x", "velocity_y", "d_sigma_tau", "d_sigma_x", "d_sigma_y", "heating")
+    element_keys = (
+        "row", "column", "x_offset", "y_offset", "tau", "velocity_x", "velocity_y",
+        "d_sigma_tau", "d_sigma_x", "d_sigma_y", "heating",
+    )
     surface_elements = {
         key: (
             torch.cat([chunk[key] for chunk in element_chunks]).detach().cpu().numpy()
@@ -679,10 +814,12 @@ def build_freezeout_surface(hydro: HydroResult, axis: np.ndarray, dx: float) -> 
         raise RuntimeError("No cells crossed the requested freeze-out temperature.")
     rows = elements["row"].astype(np.int64)
     columns = elements["column"].astype(np.int64)
+    x = axis[columns] + elements.get("x_offset", np.zeros(columns.size)) * dx
+    y = axis[rows] + elements.get("y_offset", np.zeros(rows.size)) * dx
     return SurfaceResult(
         tau=elements["tau"].astype(np.float32),
-        x=axis[columns].astype(np.float32),
-        y=axis[rows].astype(np.float32),
+        x=x.astype(np.float32),
+        y=y.astype(np.float32),
         velocity_x=elements["velocity_x"].astype(np.float32),
         velocity_y=elements["velocity_y"].astype(np.float32),
         d_sigma_tau=elements["d_sigma_tau"].astype(np.float32),
@@ -1290,6 +1427,12 @@ def build_parser() -> argparse.ArgumentParser:
         "at least 12000; 40000 with --particles 0).",
     )
     parser.add_argument("--energy-floor", type=float, default=1.0e-8)
+    parser.add_argument(
+        "--solver",
+        choices=("kt", "rusanov"),
+        default="kt",
+        help="Transport scheme: second-order Kurganov-Tadmor (default) or the first-order Rusanov update.",
+    )
     parser.add_argument("--cpu", action="store_true")
     return parser
 

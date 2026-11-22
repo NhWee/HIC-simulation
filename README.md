@@ -35,19 +35,19 @@ Indicative values from the reference run (stored with tolerances in
 | Energy-weighted handoff pre-flow | `0.149 c` |
 | QGP-core cells at hydrodynamization | `3594` |
 | Sampled hadrons | `900` |
-| Mean transverse momentum (charged, after decays) | `0.444 GeV` |
-| Mean pT of pi / K / p (charged) | `0.41 / 0.54 / 0.72 GeV` |
-| Reaction-plane `v2` (charged) | `0.010` (single-sample Monte Carlo spread about 0.004) |
-| Entropy above `Tsw` at `tau0` / through freeze-out | `705 / 688` per unit rapidity |
-| Charged `dN/deta` after resonance decays | `64` |
+| Mean transverse momentum (charged, after decays) | `0.451 GeV` |
+| Mean pT of pi / K / p (charged) | `0.41 / 0.55 / 0.77 GeV` |
+| Reaction-plane `v2` (charged) | `0.018` (single-sample Monte Carlo spread about 0.004) |
+| Entropy above `Tsw` at `tau0` / through freeze-out | `705 / 700` per unit rapidity |
+| Charged `dN/deta` after resonance decays | `71` |
 | Hadron-resonance-gas / lattice entropy density at `Tsw` | `0.884` |
 
 These values are regression references rather than experimental predictions.
 The reference keeps the uncalibrated `--initial-peak-energy 6`; calibrate it
 with `hic/calibrate_normalization.py` against a measured `dNch/deta` (ROADMAP P0-2
 and P2-2). The rendered images above predate the exact Milne
-source terms (P0-3), the lattice-QCD equation of state (P0-1) and the
-isotherm-crossing freeze-out surface (P0-4) and resonance decays (P2-2) described in [docs/ROADMAP.md](docs/ROADMAP.md);
+source terms (P0-3), the lattice-QCD equation of state (P0-1), the freeze-out
+surface (P0-4, P1-3), resonance decays (P2-2) and the second-order solver (P1-1) described in [docs/ROADMAP.md](docs/ROADMAP.md);
 re-render them with `.\run_reproduce_blender.ps1`.
 The complete run writes a 13-second, 1280 x 720, 24 fps Blender animation and
 a machine-readable physics audit.
@@ -62,9 +62,10 @@ The reference Blender event uses:
 4. transport of `T00`, `T0i`, and `Tij`, with timelike-eigenvector Landau matching
 5. the HotQCD (2+1)-flavor lattice-QCD equation of state, tabulated
    thermodynamically consistently by `hic/lattice_eos.py`
-6. boost-invariant 2+1D ideal relativistic hydrodynamics
-7. a `Tsw=145 MeV` isothermal hypersurface built from every isotherm crossing
-   (cooling and heating), with normals from the temperature gradient
+6. boost-invariant 2+1D ideal relativistic hydrodynamics, second-order
+   Kurganov-Tadmor transport with Strang-split Milne source terms (`--solver kt`)
+7. a `Tsw=145 MeV` isothermal hypersurface built cube by cube in (tau, x, y)
+   from the hot parts of each cube's faces, so its flux closes exactly
 8. positive-contribution Cooper-Frye sampling of a hadron resonance gas (229
    charge states up to about 1.8 GeV, `hic/hadrons.py`); the mean multiplicity is
    the Cooper-Frye integral (`--particles 0` samples the hadron count from it,
@@ -185,8 +186,9 @@ Run the hydrodynamic validation suite:
 It checks uniform rest and boosted states, Gaussian-fireball conservation,
 analytic Bjorken cooling, crossover-EoS substep convergence, and the analytic
 Gubser flow (simultaneous transverse and boost-invariant longitudinal
-expansion; the first-order update reaches about 15% L-infinity error in the
-energy density on the default 160 x 160 grid and converges at first order). Additional
+expansion; the default Kurganov-Tadmor update reaches 1.2% L-infinity error in the
+energy density on the default 160 x 160 grid and converges at second order, the
+first-order Rusanov option 15%). Additional
 benchmarks are available through:
 
 ```powershell

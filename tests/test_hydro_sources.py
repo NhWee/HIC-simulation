@@ -82,8 +82,9 @@ def test_gubser_solution_satisfies_milne_equations():
             assert abs(residual) < 1.0e-6 * max(1.0, t[0])
 
 
-def test_gubser_flow_converges_at_first_order():
-    kwargs = dict(extent=8.0, cfl=0.25, tau0=1.0, tau_end=2.0, q=1.0, compare_radius=3.0, device=torch.device("cpu"))
+def test_rusanov_gubser_flow_converges_at_first_order():
+    kwargs = dict(extent=8.0, cfl=0.25, tau0=1.0, tau_end=2.0, q=1.0, compare_radius=3.0, device=torch.device("cpu"),
+                  solver="rusanov")
     coarse_energy, coarse_velocity = gubser_flow_error(80, **kwargs)
     fine_energy, fine_velocity = gubser_flow_error(160, **kwargs)
     # dx shrinks by (2*8/79)/(2*8/159) ~ 2.01 between the two grids.
@@ -91,3 +92,24 @@ def test_gubser_flow_converges_at_first_order():
     assert math.log(coarse_energy / fine_energy) / math.log(ratio) > 0.8
     assert math.log(coarse_velocity / fine_velocity) / math.log(ratio) > 0.8
     assert fine_energy < 0.18 and fine_velocity < 0.03
+
+
+def test_kurganov_tadmor_gubser_flow_converges_at_second_order():
+    # Measured: L_inf(epsilon) = 0.0347 / 0.0120 / 0.0032 on 80 / 160 / 320 grids (order 1.5, then 1.9).
+    kwargs = dict(extent=8.0, cfl=0.25, tau0=1.0, tau_end=2.0, q=1.0, compare_radius=3.0, device=torch.device("cpu"),
+                  solver="kt")
+    medium_energy, medium_velocity = gubser_flow_error(160, **kwargs)
+    fine_energy, fine_velocity = gubser_flow_error(320, **kwargs)
+    ratio = (16.0 / 159.0) / (16.0 / 319.0)
+    assert medium_energy < 0.015 and medium_velocity < 0.003
+    assert math.log(medium_energy / fine_energy) / math.log(ratio) > 1.7
+    assert math.log(medium_velocity / fine_velocity) / math.log(ratio) > 1.7
+
+
+def test_kurganov_tadmor_keeps_uniform_states_exactly():
+    from hic.ideal_hydro_2d import hydro_step
+
+    energy = torch.full((12, 12), 3.0, dtype=torch.float64)
+    state = conserved_from_primitive(energy, torch.full_like(energy, 0.3), torch.full_like(energy, -0.2), CONFORMAL)
+    moved = hydro_step(state, 1.0, 0.05, 0.1, CONFORMAL, FLOOR, solver="kt", bjorken=False)
+    torch.testing.assert_close(moved, state, rtol=0.0, atol=1.0e-12)

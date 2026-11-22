@@ -149,3 +149,38 @@ def test_resonance_decays_raise_multiplicity_and_order_mean_pt_by_mass(event_24)
     pion, kaon, proton = with_decays.mean_pt_identified
     assert pion < kaon < proton
     assert with_decays.dnch_deta < with_decays.dnch_dy  # pseudorapidity Jacobian pT/mT < 1
+
+
+def test_isotherm_cubes_uniform_cooling_and_moving_front():
+    zero = torch.zeros((6, 9), dtype=torch.float64)
+    dx, dt, tau0, threshold = 0.2, 0.1, 2.0, 0.145
+    # Uniform cooling through the threshold at 30% of the step: every cube gives tau_cross dx^2 (1, 0, 0).
+    before, after = torch.full_like(zero, threshold + 0.003), torch.full_like(zero, threshold - 0.007)
+    cubes = pipeline.isotherm_cubes(before, after, threshold, tau0, dt, dx, (zero, zero), (zero, zero))
+    tau_cross = tau0 + 0.3 * dt
+    torch.testing.assert_close(cubes["d_sigma_tau"], torch.full_like(cubes["d_sigma_tau"], tau_cross * dx * dx), rtol=0.02, atol=0)
+    assert float(cubes["d_sigma_x"].abs().max()) < 1.0e-12 and float(cubes["tau"].sub(tau_cross).abs().max()) < 1.0e-9
+    # Planar heating front x_f = c tau over a strip of height Ly: the surface has covariant normal
+    # tau dtau dy (-c, 1, 0), so its total is Ly * int tau dtau * (-c, 1, 0).
+    k, c = 0.05, 0.4
+    x = torch.arange(9, dtype=torch.float64) * dx
+    field = lambda tau: (threshold + k * (c * tau - x)).expand(6, -1).clone()
+    dt_front = 0.6
+    cubes = pipeline.isotherm_cubes(field(tau0), field(tau0 + dt_front), threshold, tau0, dt_front, dx, (zero, zero), (zero, zero))
+    strip = 5 * dx * ((tau0 + dt_front) ** 2 - tau0**2) / 2
+    # Hot fractions are sampled (16^2 points per face, 8^3 per volume): ~1/samples error for these few cubes.
+    assert float(cubes["d_sigma_x"].sum()) == pytest.approx(strip, rel=0.02)
+    assert float(cubes["d_sigma_tau"].sum()) == pytest.approx(-c * strip, rel=0.04)
+    assert bool(torch.all(cubes["heating"]))
+
+
+@pytest.mark.parametrize("solver", ["rusanov", "kt"])
+@pytest.mark.parametrize("grid_size", [48, 96])
+def test_entropy_closes_at_any_resolution_and_solver(monkeypatch, solver, grid_size):
+    monkeypatch.setattr(
+        sys, "argv",
+        ["x", "--cpu", "--solver", solver, "--grid-size", str(grid_size), "--extent", "14", "--energy-scale", "65.8",
+         "--impact-parameter", "9.3", "--seed", "21", "--particles", "1", "--eos-table", str(EOS_TABLE)],
+    )
+    audit = pipeline.simulate(pipeline.parse_args(), verbose=False).audit
+    assert abs(audit["entropy_flux_ratio"] - 1.0) < 0.02, audit["entropy_flux_ratio"]

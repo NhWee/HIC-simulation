@@ -204,6 +204,108 @@ def rusanov_step(
     return next_state
 
 
+def _generalized_minmod(minus: torch.Tensor, central: torch.Tensor, plus: torch.Tensor) -> torch.Tensor:
+    same_sign = (torch.sign(minus) == torch.sign(central)) & (torch.sign(central) == torch.sign(plus))
+    magnitude = torch.minimum(torch.minimum(minus.abs(), central.abs()), plus.abs())
+    return torch.where(same_sign, torch.sign(central) * magnitude, torch.zeros_like(central))
+
+
+def _interface_states(q: torch.Tensor, axis: int, theta: float) -> tuple[torch.Tensor, torch.Tensor]:
+    """MUSCL states left and right of every interior interface along ``axis`` (q is padded by 2 cells)."""
+    q_center = q.narrow(axis, 1, q.shape[axis] - 2)
+    minus = q_center - q.narrow(axis, 0, q.shape[axis] - 2)
+    plus = q.narrow(axis, 2, q.shape[axis] - 2) - q_center
+    slope = _generalized_minmod(theta * minus, 0.5 * (minus + plus), theta * plus)
+    # Cells 1..n+2 of the padded array now have slopes; interfaces between consecutive cells.
+    left = (q_center + 0.5 * slope).narrow(axis, 0, q_center.shape[axis] - 1)
+    right = (q_center - 0.5 * slope).narrow(axis, 1, q_center.shape[axis] - 1)
+    return left, right
+
+
+def _directional_flux(
+    energy: torch.Tensor, ux: torch.Tensor, uy: torch.Tensor, eos: EquationOfState, axis: int
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Conserved state, flux along ``axis`` and signal speed for primitive (e, u^x, u^y) arrays."""
+    gamma = torch.sqrt(1.0 + ux * ux + uy * uy)
+    vx, vy = ux / gamma, uy / gamma
+    pressure = eos.pressure(energy)
+    enthalpy = energy + pressure
+    state = torch.stack((enthalpy * gamma * gamma - pressure, enthalpy * gamma * ux, enthalpy * gamma * uy))
+    v_axis = vx if axis == 1 else vy
+    flux = torch.stack((state[1] if axis == 1 else state[2], state[1] * v_axis, state[2] * v_axis))
+    flux[1 if axis == 1 else 2] = flux[1 if axis == 1 else 2] + pressure
+    sound = torch.sqrt(torch.clamp(eos.sound_speed2(energy), 0.0, 1.0))
+    speed = (v_axis.abs() + sound) / (1.0 + v_axis.abs() * sound)
+    return state, flux, speed
+
+
+def kt_rhs(state: torch.Tensor, dx: float, eos: EquationOfState, energy_floor: float, theta: float = 1.5) -> torch.Tensor:
+    """-div F of the boost-invariant ideal-fluid transport (no Milne source), Kurganov-Tadmor central upwind.
+
+    Primitive variables (e, u^x, u^y) are reconstructed with a generalized minmod limiter, so interface
+    states stay physical; the scheme is second order where the solution is smooth. Two ghost cells per
+    side copy the edge values (outflow boundaries).
+    """
+    energy, _, vx, vy = primitive_from_conserved(state[0], state[1], state[2], eos, energy_floor)
+    gamma = 1.0 / torch.sqrt(torch.clamp(1.0 - vx * vx - vy * vy, min=1.0e-12))
+    primitives = torch.stack((energy, gamma * vx, gamma * vy))
+    padded = torch.nn.functional.pad(primitives.unsqueeze(0), (2, 2, 2, 2), mode="replicate").squeeze(0)
+    rhs = torch.zeros_like(state)
+    for axis in (1, 2):  # 1: x (columns), 2: y (rows) in the (component, row, column) layout
+        dim = 2 if axis == 1 else 1
+        # Keep only the physical cells across the other direction.
+        q = padded[:, 2:-2, :] if axis == 1 else padded[:, :, 2:-2]
+        left, right = _interface_states(q, dim, theta)
+        left = torch.cat((torch.clamp(left[:1], min=energy_floor), left[1:]))
+        right = torch.cat((torch.clamp(right[:1], min=energy_floor), right[1:]))
+        state_l, flux_l, speed_l = _directional_flux(left[0], left[1], left[2], eos, axis)
+        state_r, flux_r, speed_r = _directional_flux(right[0], right[1], right[2], eos, axis)
+        speed = torch.maximum(speed_l, speed_r).unsqueeze(0)
+        interface = 0.5 * (flux_l + flux_r) - 0.5 * speed * (state_r - state_l)
+        n = state.shape[dim]
+        rhs -= (interface.narrow(dim, 1, n) - interface.narrow(dim, 0, n)) / dx
+    return rhs
+
+
+def kt_step(
+    state: torch.Tensor, dx: float, dt: float, eos: EquationOfState, energy_floor: float, theta: float = 1.5
+) -> torch.Tensor:
+    """One SSP-RK2 (Heun) step of the Kurganov-Tadmor transport."""
+    def clamp(u: torch.Tensor) -> torch.Tensor:
+        return torch.stack((torch.clamp(u[0], min=energy_floor), u[1], u[2]))
+
+    first = clamp(state + dt * kt_rhs(state, dx, eos, energy_floor, theta))
+    return clamp(0.5 * state + 0.5 * (first + dt * kt_rhs(first, dx, eos, energy_floor, theta)))
+
+
+def hydro_step(
+    state: torch.Tensor,
+    tau: float,
+    dt: float,
+    dx: float,
+    eos: EquationOfState,
+    energy_floor: float,
+    solver: str = "kt",
+    bjorken: bool = True,
+) -> torch.Tensor:
+    """Advance tau -> tau + dt: transport plus (optionally) the boost-invariant Milne source terms.
+
+    ``kt``: second-order Kurganov-Tadmor transport with Strang splitting of the source
+    (half step, transport, half step). ``rusanov``: the original first-order update with Lie splitting.
+    """
+    if solver == "rusanov":
+        state = rusanov_step(state, dx, dt, eos, energy_floor)
+        return apply_bjorken_cooling(state, tau, dt, eos, energy_floor) if bjorken else state
+    if solver != "kt":
+        raise ValueError(f"unknown solver {solver!r}")
+    if bjorken:
+        state = apply_bjorken_cooling(state, tau, 0.5 * dt, eos, energy_floor)
+    state = kt_step(state, dx, dt, eos, energy_floor)
+    if bjorken:
+        state = apply_bjorken_cooling(state, tau + 0.5 * dt, 0.5 * dt, eos, energy_floor)
+    return state
+
+
 def laplacian_no_wrap(field: torch.Tensor, dx: float) -> torch.Tensor:
     laplacian = torch.zeros_like(field)
     laplacian[1:-1, 1:-1] = (
@@ -341,16 +443,11 @@ def run_hydro(args: argparse.Namespace) -> tuple[list[dict[str, float]], list[di
                 }
             )
         if step < args.steps:
-            state = rusanov_step(state, dx, dt, eos, args.energy_floor)
+            state = hydro_step(
+                state, args.tau0 + step * dt, dt, dx, eos, args.energy_floor,
+                solver=args.solver, bjorken=args.bjorken_expansion,
+            )
             state = apply_shear_viscous_momentum_diffusion(state, dx, dt, args.shear_viscosity)
-            if args.bjorken_expansion:
-                state = apply_bjorken_cooling(
-                    state,
-                    tau=args.tau0 + step * dt,
-                    dt=dt,
-                    eos=eos,
-                    energy_floor=args.energy_floor,
-                )
             if args.freezeout_output is not None:
                 energy_density, pressure, velocity_x, velocity_y = primitive_from_conserved(
                     state[0], state[1], state[2], eos, args.energy_floor
@@ -386,6 +483,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cfl", type=float, default=0.25, help="Courant factor.")
     add_eos_arguments(parser)
     parser.add_argument("--energy-floor", type=float, default=1.0e-8, help="Minimum energy density.")
+    parser.add_argument(
+        "--solver",
+        choices=("kt", "rusanov"),
+        default="kt",
+        help="Transport scheme: second-order Kurganov-Tadmor (default) or the first-order Rusanov update.",
+    )
     parser.add_argument(
         "--shear-viscosity",
         type=float,
