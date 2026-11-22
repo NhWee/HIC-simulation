@@ -109,7 +109,7 @@ def test_ensemble_driver_smoke(tmp_path, monkeypatch):
         "sys.argv",
         ["flow_ensemble", "--energy-scale", "80", "--classes", "0-10,30-50", "--events-per-class", "2",
          "--glauber-events", "200", "--grid-size", "50", "--extent", "14", "--candidate-pool", "30000",
-         "--cpu", "--output", str(tmp_path / "ensemble.json")],
+         "--population-events", "20", "--cpu", "--output", str(tmp_path / "ensemble.json")],
     )
     flow_ensemble.main()
     import json
@@ -122,3 +122,37 @@ def test_ensemble_driver_smoke(tmp_path, monkeypatch):
         assert np.isfinite(summary["v2_2"]) and summary["v2_2"] > 0.0
         assert len(summary["v2_charged_pt"]) == len(summary["pt_edges"]) - 1
     assert (tmp_path / "ensemble.csv").exists()
+    for summary in (central, peripheral):
+        ratio = summary["eps2_2_population_source"] / summary["eps2_2_sample_source"]
+        assert summary["v2_2_geometry_corrected"] == pytest.approx(summary["v2_2"] * ratio)
+
+
+def test_measurements_file_and_report_overlay():
+    """data/measurements/auau200.csv (tools/fetch_measurements.py) feeds the report's data overlay."""
+    import csv
+    from pathlib import Path
+
+    from hic import plot_flow_ensemble
+
+    path = Path(__file__).resolve().parents[1] / "data" / "measurements" / "auau200.csv"
+    rows = list(csv.DictReader(path.open()))
+    observables = {r["observable"] for r in rows}
+    assert {"dnch_deta", "dnch_deta_per_pair", "v2_2", "mean_pt_pion", "mean_pt_kaon", "mean_pt_proton"} <= observables
+    central = [r for r in rows if r["observable"] == "dnch_deta" and r["centrality_low"] == "0"]
+    assert float(central[0]["value"]) == pytest.approx(687.0)  # PHENIX 0-5%
+    summary = {
+        "centrality_low": 20.0, "centrality_high": 30.0, "n_part": 170.0, "dnch_deta": 300.0, "dnch_deta_error": 5.0,
+        "eps2_2": 0.3, "eps3_2": 0.2, "v2_2": 0.07, "v2_2_error": 0.01, "v3_2": 0.04, "v3_2_error": 0.01,
+        "v2_2_geometry_corrected": 0.075, "v2_2_geometry_corrected_error": 0.01,
+        "v3_2_geometry_corrected": 0.041, "v3_2_geometry_corrected_error": 0.01,
+        "mean_pt_charged_pion_gev": 0.5, "mean_pt_charged_pion_gev_error": 0.01,
+        "mean_pt_charged_kaon_gev": 0.8, "mean_pt_charged_kaon_gev_error": 0.01,
+        "mean_pt_proton_antiproton_gev": 1.1, "mean_pt_proton_antiproton_gev_error": 0.01,
+        "pt_edges": [0.2, 1.0, 2.0], "v2_charged_pt": [0.05, 0.1], "v2_charged_pt_error": [0.01, 0.01],
+        **{f"v2_{k}_pt": [0.05, 0.1] for k in ("pion", "kaon", "proton")},
+        **{f"v2_{k}_pt_error": [0.01, 0.01] for k in ("pion", "kaon", "proton")},
+    }
+    panels = plot_flow_ensemble.build_panels({"classes": [{"summary": summary}]}, rows)
+    names = [series["name"] for panel in panels for series in panel["series"]]
+    assert any(name.startswith("STAR") for name in names)
+    assert "PHENIX" in names

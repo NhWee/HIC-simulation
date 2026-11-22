@@ -135,3 +135,34 @@ def test_resonance_gas_entropy_is_close_to_the_lattice_eos_at_freezeout():
     ratio_130 = hrg_thermodynamics(0.130)["s"] / thermodynamics(0.130)["entropy_density"]
     assert 0.85 < ratio_145 < 1.05
     assert ratio_145 < ratio_130 < 1.05
+
+
+def test_masses_widths_and_spins_match_pdg():
+    """Every state against PDG 2026 (tests/data/pdg_hadrons.json, from tools/make_pdg_reference.py)."""
+    import json
+    from pathlib import Path
+
+    from hic.hadrons import MULTIPLETS
+
+    reference = json.loads((Path(__file__).resolve().parent / "data" / "pdg_hadrons.json").read_text())
+    multiplets = {m.name: m for m in MULTIPLETS}
+    checked = 0
+    widths_checked: set[str] = set()
+    for entry in reference["states"]:
+        mult = multiplets[entry["multiplet"]]
+        if entry["charge"] is None:
+            mass = mult.mass
+        else:
+            matches = [h for h in STATES if h.multiplet == mult.name and h.charge == entry["charge"]]
+            assert matches, entry
+            mass = matches[0].mass
+        if entry["mass"] is not None:  # f0(1370) has only a PDG range
+            assert mass == pytest.approx(entry["mass"], rel=1.0e-4), entry
+            checked += 1
+        # One width per multiplet (metadata only): compare it with the multiplet's first listed state.
+        if entry["width"] and mult.width > 0.0 and mult.name not in widths_checked:
+            assert mult.width == pytest.approx(entry["width"], rel=0.01), entry
+            widths_checked.add(mult.name)
+        if entry["J"] not in ("None", "?"):
+            assert F(entry["J"]) == mult.spin, entry
+    assert checked >= 75

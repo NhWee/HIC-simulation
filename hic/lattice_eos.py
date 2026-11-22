@@ -6,15 +6,15 @@ The pressure is the HotQCD parametrization,
             * (p_id + a_n/t + b_n/t^2 + c_n/t^3 + d_n/t^4) / (1 + a_d/t + b_d/t^2 + c_d/t^3 + d_d/t^4),
 
 with t = T/T_c, T_c = 154 MeV and p_id = 95 pi^2/180 (the Stefan-Boltzmann value for 2+1 flavors),
-from A. Bazavov et al. (HotQCD), Phys. Rev. D 90, 094503 (2014), arXiv:1407.6387. The
-parametrization was fitted to lattice results for 130 MeV <= T <= 400 MeV and is constructed to
-agree with the hadron resonance gas below that range; rows above 400 MeV use it as an extrapolation
-toward the Stefan-Boltzmann limit.
+from A. Bazavov et al. (HotQCD), Phys. Rev. D 90, 094503 (2014), arXiv:1407.6387, Eq. (16) with the
+coefficients of its Table II, which the paper gives for 100 MeV <= T <= 400 MeV. Rows above 400 MeV
+use it as an extrapolation toward the Stefan-Boltzmann limit, and rows below 100 MeV continue it
+into the hadron-resonance-gas region it was built to approach.
 
-NOTE: the coefficients below were transcribed without access to the paper in the session that added
-this file. They reproduce the paper's quoted crossover energy density (0.18-0.5 GeV/fm^3 for
-145-163 MeV), a trace-anomaly peak of about 4 near T = 200 MeV and a sound-speed minimum of about
-0.14-0.15 near T_c (see tests/test_eos.py), but they should be checked against the paper's table once.
+The coefficients were checked against the paper (Table II), and tests/test_eos.py compares the
+tabulated p/T^4, e/T^4, s/T^3 and c_s^2 with every continuum-extrapolated lattice point of its
+Table I (130-400 MeV, stored in tests/data/hotqcd_2014_table1.json): all agree within one standard
+deviation.
 
 All other columns follow from thermodynamic identities, so the table is consistent by construction:
 

@@ -15,7 +15,7 @@
     "python": "3.13.18",
     "numpy": "2.4.4",
     "torch": "2.15.0+cu132",
-    "platform": "Linux-6.18.44-fc-v236-x86_64-with-glibc2.39"
+    "platform": "Linux-6.18.44-fc-v726-x86_64-with-glibc2.39"
   },
   "observables": {
     "passed": {
@@ -95,35 +95,35 @@
       "abs": 0.01
     },
     "dnch_deta": {
-      "value": 64.3164866987937,
+      "value": 63.96669052339647,
       "rel": 0.03
     },
     "dn_dy_pion": {
-      "value": 98.42807159708757,
+      "value": 98.17654825206691,
       "rel": 0.03
     },
     "dn_dy_kaon": {
-      "value": 23.224001139505287,
+      "value": 23.150598856326546,
       "rel": 0.04
     },
     "dn_dy_baryon": {
-      "value": 9.710225700757459,
+      "value": 9.705213121353703,
       "rel": 0.06
     },
     "hrg_to_eos_entropy_ratio_at_tsw": {
-      "value": 0.8850032161576908,
+      "value": 0.8842894066540608,
       "rel": 1e-06
     },
     "mean_pt_charged_pion_gev": {
-      "value": 0.40273323666933714,
+      "value": 0.40509265076969814,
       "rel": 0.02
     },
     "mean_pt_charged_kaon_gev": {
-      "value": 0.5379273256107792,
+      "value": 0.5422846838069729,
       "rel": 0.03
     },
     "mean_pt_proton_antiproton_gev": {
-      "value": 0.7320058999463052,
+      "value": 0.7221626839895869,
       "rel": 0.04
     },
     "sampled_primaries": {
@@ -131,15 +131,15 @@
       "exact": true
     },
     "mean_pt_gev": {
-      "value": 0.44201176755991356,
+      "value": 0.44381611623814987,
       "rel": 0.02
     },
     "v2_reaction_plane": {
-      "value": 0.014538275132390161,
+      "value": 0.010465169343315456,
       "abs": 0.004
     },
     "v3_reaction_plane": {
-      "value": 0.009031918609573454,
+      "value": 0.006688911200779296,
       "abs": 0.004
     }
   }

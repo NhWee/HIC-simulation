@@ -1,4 +1,5 @@
 """The tabulated lattice-QCD equation of state (ROADMAP P0-1)."""
+import json
 import math
 from pathlib import Path
 
@@ -85,3 +86,20 @@ def test_pressure_outside_table_is_physical():
     edge_p = eos.pressure(edges)
     assert float(edge_p[0]) == pytest.approx(float(edge_p[1]), rel=1.0e-6)
     assert float(edge_p[2]) == pytest.approx(float(edge_p[3]), rel=1.0e-6)
+
+
+def test_parametrization_matches_hotqcd_lattice_table():
+    """Every continuum-extrapolated point of HotQCD Table I (130-400 MeV) within one standard deviation."""
+    data = json.loads((Path(__file__).resolve().parent / "data" / "hotqcd_2014_table1.json").read_text())
+    assert len(data["rows"]) == 55
+    for temperature_mev, row in data["rows"].items():
+        t = int(temperature_mev) / 1000.0
+        th = thermodynamics(t)
+        model = {
+            "p": th["pressure"] * HBARC**3 / t**4,
+            "e": th["energy_density"] * HBARC**3 / t**4,
+            "s": th["entropy_density"] * HBARC**3 / t**3,
+            "cs2": th["sound_speed2"],
+        }
+        for key, (value, error) in row.items():
+            assert abs(model[key] - value) <= error, (temperature_mev, key, model[key], value, error)

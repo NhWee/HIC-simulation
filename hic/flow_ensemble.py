@@ -205,21 +205,76 @@ def resummarize(result: dict[str, object]) -> dict[str, object]:
     return result
 
 
+def source_eccentricities(event_args: argparse.Namespace, records: list[dict], grid_size: int = 120) -> np.ndarray:
+    """eps_2 and eps_3 of the deposited Glauber source (before free streaming) for each scan record."""
+    import torch
+
+    from hic.blender_event_pipeline import build_event_geometry, make_grid, participant_eccentricities
+
+    torch.set_grad_enabled(False)
+    xx, yy, _ = make_grid(grid_size, event_args.extent, torch.device("cpu"))
+    axis = np.linspace(-event_args.extent, event_args.extent, grid_size)
+    values = []
+    for record in records:
+        args = argparse.Namespace(**{**vars(event_args), "seed": record["seed"], "impact_parameter": record["impact_parameter"]})
+        geometry = build_event_geometry(args, xx, yy, np.random.default_rng(record["seed"]))
+        planes = participant_eccentricities(geometry.source.cpu().numpy(), axis)
+        values.append([planes[n][0] for n in pipeline.FLOW_HARMONICS])
+    return np.asarray(values)
+
+
+def add_geometry_correction(result: dict[str, object], population_events: int) -> dict[str, object]:
+    """Correct each class's v_n{2} for the eccentricity of its small hydro sample.
+
+    With a few hydro events per class, eps_n{2} of the sample can differ from that of the class by tens
+    of percent. Because v_n{2}/eps_n{2} is nearly constant within a class, the source eccentricity of
+    the whole class (cheap Glauber events) serves as a control variate:
+        v_n{2}_corrected = v_n{2} x eps_n{2}(class) / eps_n{2}(sample),
+    with both eccentricities computed the same way, from the deposited source.
+    """
+    settings = result["settings"]
+    event_args = pipeline.parse_args(["--grid-size", str(settings["grid_size"]), "--extent", str(settings["extent"]), "--cpu"])
+    scan = glauber_scan(event_args, settings["glauber_events"], settings["b_max"], settings["seed"])
+    for entry in result["classes"]:
+        summary = entry["summary"]
+        low, high = summary["centrality_low"], summary["centrality_high"]
+        population = [r for r in scan if low <= r["centrality_percent"] < high][:population_events]
+        sample_seeds = {e["seed"] for e in entry["events"] if e["passed"]}
+        sample = [r for r in scan if r["seed"] in sample_seeds]
+        eps_population = source_eccentricities(event_args, population)
+        eps_sample = source_eccentricities(event_args, sample)
+        for index, n in enumerate(pipeline.FLOW_HARMONICS):
+            pop = float(np.sqrt(np.mean(eps_population[:, index] ** 2)))
+            smp = float(np.sqrt(np.mean(eps_sample[:, index] ** 2)))
+            summary[f"eps{n}_2_population_source"] = pop
+            summary[f"eps{n}_2_sample_source"] = smp
+            summary[f"v{n}_2_geometry_corrected"] = summary[f"v{n}_2"] * pop / smp
+            summary[f"v{n}_2_geometry_corrected_error"] = summary[f"v{n}_2_error"] * pop / smp
+        summary["population_events"] = len(population)
+    return result
+
+
 def write_summary_csv(result: dict[str, object], path: Path) -> None:
     keys = ["centrality_low", "centrality_high", "events", "n_part", "dnch_deta", "dnch_deta_error",
             "mean_pt_charged_pion_gev", "mean_pt_charged_kaon_gev", "mean_pt_proton_antiproton_gev",
-            "eps2_2", "v2_2", "v2_2_error", "eps3_2", "v3_2", "v3_2_error", "v2_pp", "v3_pp"]
+            "eps2_2", "v2_2", "v2_2_error", "eps3_2", "v3_2", "v3_2_error", "v2_pp", "v3_pp",
+            "eps2_2_population_source", "eps2_2_sample_source", "v2_2_geometry_corrected", "v2_2_geometry_corrected_error",
+            "eps3_2_population_source", "eps3_2_sample_source", "v3_2_geometry_corrected", "v3_2_geometry_corrected_error"]
     with path.open("w", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(keys)
         for entry in result["classes"]:
-            writer.writerow([entry["summary"][k] for k in keys])
+            writer.writerow([entry["summary"].get(k, "") for k in keys])
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--energy-scale", type=float, default=None, help="Global normalization (see calibrate_normalization).")
     parser.add_argument("--from-json", type=Path, default=None, help="Recompute class summaries of an existing run.")
+    parser.add_argument(
+        "--population-events", type=int, default=300,
+        help="Glauber events per class for the eccentricity correction (0 disables it).",
+    )
     parser.add_argument("--classes", default=DEFAULT_CLASSES, help="Comma-separated centrality classes in percent.")
     parser.add_argument("--events-per-class", type=int, default=8)
     parser.add_argument("--glauber-events", type=int, default=4000, help="Glauber configurations for the centrality scan.")
@@ -239,6 +294,8 @@ def main() -> None:
             parser.error("--energy-scale is required (unless --from-json)")
         print(f"Glauber scan: {args.glauber_events} events; classes {args.classes}; {args.events_per_class} hydro events each")
         result = run_ensemble(args)
+    if args.population_events > 0:
+        result = add_geometry_correction(result, args.population_events)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(result, indent=1) + "\n", encoding="ascii")
     write_summary_csv(result, args.output.with_suffix(".csv"))
@@ -248,6 +305,8 @@ def main() -> None:
             f"{s['centrality_low']:g}-{s['centrality_high']:g}%: Npart={s['n_part']:.0f} dNch/deta={s['dnch_deta']:.0f} "
             f"v2{{2}}={s['v2_2']:.4f}+-{s['v2_2_error']:.4f} v3{{2}}={s['v3_2']:.4f}+-{s['v3_2_error']:.4f} "
             f"eps2{{2}}={s['eps2_2']:.3f} eps3{{2}}={s['eps3_2']:.3f} "
+            + (f"v2{{2}}_corr={s['v2_2_geometry_corrected']:.4f} " if "v2_2_geometry_corrected" in s else "")
+            + 
             f"({s['events']} events; failed audits {s['failed_audits']})"
         )
     print(f"Saved {args.output} and {args.output.with_suffix('.csv')}")

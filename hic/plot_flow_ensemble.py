@@ -37,6 +37,23 @@ def load_data(path: Path | None) -> list[dict]:
         return list(csv.DictReader(handle))
 
 
+def flow_series(summaries: list[dict], centrality: list[float], labels: list[str]) -> list[dict]:
+    """v_n{2} per class: eccentricity-corrected values when present (filled), raw sample values (hollow)."""
+    corrected = all("v2_2_geometry_corrected" in s for s in summaries)
+    series = []
+    for slot, n in enumerate((2, 3)):
+        sub = "₂" if n == 2 else "₃"
+        if corrected:
+            series.append({"name": f"v{sub}{{2}} model", "x": centrality,
+                           "y": [s[f"v{n}_2_geometry_corrected"] for s in summaries],
+                           "error": [s[f"v{n}_2_geometry_corrected_error"] for s in summaries],
+                           "kind": "model", "slot": slot, "text": labels})
+        series.append({"name": f"v{sub}{{2}} model, raw sample" if corrected else f"v{sub}{{2}} model", "x": centrality,
+                       "y": [s[f"v{n}_2"] for s in summaries], "error": [s[f"v{n}_2_error"] for s in summaries],
+                       "kind": "model_raw" if corrected else "model", "slot": slot, "text": labels})
+    return series
+
+
 def build_panels(result: dict, data: list[dict]) -> list[dict]:
     """Panel specs: each is {title, x_title, y_title, series: [{name, x, y, error, kind, slot}]}."""
     summaries = [c["summary"] for c in result["classes"]]
@@ -52,6 +69,7 @@ def build_panels(result: dict, data: list[dict]) -> list[dict]:
         return [{
             "name": rows[0].get("label") or "data",
             "x": [0.5 * (float(r["centrality_low"]) + float(r["centrality_high"])) for r in rows],
+            "xerror": [0.5 * (float(r["centrality_high"]) - float(r["centrality_low"])) for r in rows],
             "y": [float(r["value"]) for r in rows],
             "error": [float(r.get("error") or 0.0) for r in rows],
             "kind": "data",
@@ -72,12 +90,7 @@ def build_panels(result: dict, data: list[dict]) -> list[dict]:
     panels.append({
         "title": "Two-particle cumulant flow",
         "x_title": "centrality (%)", "y_title": "v_n{2}",
-        "series": [
-            {"name": "v₂{2}", "x": centrality, "y": [s["v2_2"] for s in summaries],
-             "error": [s["v2_2_error"] for s in summaries], "kind": "model", "slot": 0, "text": labels},
-            {"name": "v₃{2}", "x": centrality, "y": [s["v3_2"] for s in summaries],
-             "error": [s["v3_2_error"] for s in summaries], "kind": "model", "slot": 1, "text": labels},
-        ] + measured("v2_2") + measured("v3_2"),
+        "series": flow_series(summaries, centrality, labels) + measured("v2_2") + measured("v3_2"),
     })
     panels.append({
         "title": "Hydrodynamic response",
@@ -90,11 +103,18 @@ def build_panels(result: dict, data: list[dict]) -> list[dict]:
         ],
     })
     identified = []
-    for slot, (key, name) in enumerate((("mean_pt_charged_pion_gev", "π±"), ("mean_pt_charged_kaon_gev", "K±"),
-                                         ("mean_pt_proton_antiproton_gev", "p + p̄"))):
-        identified.append({"name": name, "x": n_part, "y": [s[key] for s in summaries],
+    multiplicity = [s["dnch_deta"] for s in summaries]
+    for slot, (key, name, observable) in enumerate((("mean_pt_charged_pion_gev", "π", "mean_pt_pion"),
+                                                     ("mean_pt_charged_kaon_gev", "K", "mean_pt_kaon"),
+                                                     ("mean_pt_proton_antiproton_gev", "p", "mean_pt_proton"))):
+        identified.append({"name": f"{name} model", "x": multiplicity, "y": [s[key] for s in summaries],
                            "error": [s[f"{key}_error"] for s in summaries], "kind": "model", "slot": slot, "text": labels})
-    panels.append({"title": "Identified mean transverse momentum", "x_title": "⟨N_part⟩", "y_title": "⟨p_T⟩ (GeV)",
+        rows = [r for r in data if r["observable"] == observable and r.get("dnch_deta")]
+        if rows:
+            identified.append({"name": f"{name} {rows[0].get('label') or 'data'}", "x": [float(r["dnch_deta"]) for r in rows],
+                               "y": [float(r["value"]) for r in rows], "error": [float(r.get("error") or 0) for r in rows],
+                               "kind": "data", "slot": slot})
+    panels.append({"title": "Identified mean transverse momentum", "x_title": "dN_ch/dη", "y_title": "⟨p_T⟩ (GeV)",
                    "series": identified})
 
     edges = summaries[0]["pt_edges"]
@@ -125,7 +145,8 @@ def render(result: dict, data: list[dict], title: str) -> str:
     rows = "".join(
         "<tr>" + "".join(f"<td>{cell}</td>" for cell in (
             class_label(s), s["events"], f"{s['n_part']:.0f}", f"{s['dnch_deta']:.0f} ± {s['dnch_deta_error']:.0f}",
-            f"{s['eps2_2']:.3f}", f"{s['v2_2']:.4f} ± {s['v2_2_error']:.4f}", f"{s['eps3_2']:.3f}",
+            f"{s['eps2_2']:.3f}", f"{s['v2_2']:.4f} ± {s['v2_2_error']:.4f}",
+            (f"{s['v2_2_geometry_corrected']:.4f}" if "v2_2_geometry_corrected" in s else "–"), f"{s['eps3_2']:.3f}",
             f"{s['v3_2']:.4f} ± {s['v3_2_error']:.4f}",
             f"{s['mean_pt_charged_pion_gev']:.3f} / {s['mean_pt_charged_kaon_gev']:.3f} / {s['mean_pt_proton_antiproton_gev']:.3f}",
         )) + "</tr>"
@@ -135,7 +156,8 @@ def render(result: dict, data: list[dict], title: str) -> str:
     note = (
         f"{events} of {total} hydro events (those passing the physics audit; {failed} excluded), "
         f"global energy scale {settings['energy_scale']:g}, {settings['grid_size']}² grid over ±{settings['extent']:g} fm. "
-        "Ideal hydrodynamics (no viscosity, no hadronic rescattering): v_n is expected to exceed measurements."
+        "Ideal hydrodynamics (no viscosity, no hadronic rescattering): v_n is expected to exceed measurements. "
+        "Filled v_n{2} points are corrected for the eccentricity of the small hydro sample (see hic.flow_ensemble); hollow points are raw."
     )
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -151,7 +173,7 @@ h1 {{ font-size: 22px; margin: 0 0 4px; }} p.note {{ color: var(--muted); margin
 .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }}
 .panel {{ border: 1px solid var(--rule); border-radius: 8px; padding: 8px; min-width: 0; }}
 .panel h2 {{ font-size: 14px; font-weight: 600; margin: 4px 8px; }}
-.plot {{ height: 300px; }}
+.plot {{ height: 420px; }}
 table {{ border-collapse: collapse; width: 100%; margin-top: 24px; font-size: 13px; font-variant-numeric: tabular-nums; }}
 .table-wrap {{ overflow-x: auto; }}
 th, td {{ text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--rule); white-space: nowrap; }}
@@ -162,7 +184,7 @@ th:first-child, td:first-child {{ text-align: left; }} th {{ color: var(--muted)
 <p class="note">{html.escape(note)}</p>
 <div class="grid" id="grid"></div>
 <div class="table-wrap"><table>
-<thead><tr><th>centrality</th><th>events</th><th>⟨N_part⟩</th><th>dN_ch/dη</th><th>ε₂{{2}}</th><th>v₂{{2}}</th><th>ε₃{{2}}</th><th>v₃{{2}}</th><th>⟨p_T⟩ π / K / p (GeV)</th></tr></thead>
+<thead><tr><th>centrality</th><th>events</th><th>⟨N_part⟩</th><th>dN_ch/dη</th><th>ε₂{{2}}</th><th>v₂{{2}}</th><th>v₂{{2}} corr.</th><th>ε₃{{2}}</th><th>v₃{{2}}</th><th>⟨p_T⟩ π / K / p (GeV)</th></tr></thead>
 <tbody>{rows}</tbody></table></div>
 </main>
 <script>
@@ -184,15 +206,17 @@ function draw() {{
   }});
   spec.panels.forEach((panel, i) => {{
     const traces = panel.series.map(s => {{
-      const isData = s.kind === "data";
-      const color = isData ? c.data : colors[s.slot];
+      const isData = s.kind === "data", isRaw = s.kind === "model_raw";
+      const color = isData ? (s.slot === undefined ? c.data : colors[s.slot]) : colors[s.slot];
+      const hollow = isData || isRaw;
       return {{
         name: s.name, x: s.x, y: s.y, text: s.text, type: "scatter",
-        mode: isData ? "markers" : "lines+markers",
+        mode: hollow ? "markers" : "lines+markers",
         line: {{ color, width: 2 }},
-        marker: {{ color: isData ? "rgba(0,0,0,0)" : color, size: 8, symbol: isData ? "square" : "circle",
-                   line: {{ color: isData ? c.data : c.surface, width: 2 }} }},
+        marker: {{ color: hollow ? "rgba(0,0,0,0)" : color, size: isData ? 9 : 8, symbol: isData ? "square" : "circle",
+                   line: {{ color: hollow ? color : c.surface, width: 2 }} }},
         error_y: {{ type: "data", array: s.error, visible: true, color, thickness: 1.5, width: 3 }},
+        error_x: {{ type: "data", array: s.xerror || [], visible: !!s.xerror, color, thickness: 1, width: 0 }},
         hovertemplate: (s.text ? "%{{text}}<br>" : "") + "%{{x:.3g}}, %{{y:.4g}}<extra>" + s.name + "</extra>",
       }};
     }});
@@ -200,8 +224,8 @@ function draw() {{
                           linecolor: c.grid, tickfont: {{ color: c.muted, size: 11 }} }});
     Plotly.newPlot("p" + i, traces, {{
       paper_bgcolor: c.surface, plot_bgcolor: c.surface, font: {{ color: c.text, family: "system-ui, sans-serif" }},
-      margin: {{ l: 56, r: 12, t: 8, b: 44 }}, xaxis: axis(panel.x_title), yaxis: axis(panel.y_title),
-      showlegend: panel.series.length > 1, legend: {{ orientation: "h", y: 1.12, x: 0, font: {{ size: 11, color: c.text }} }},
+      margin: {{ l: 56, r: 12, t: 8, b: 44 + 22 * Math.ceil(panel.series.length / 2) }}, xaxis: axis(panel.x_title), yaxis: axis(panel.y_title),
+      showlegend: panel.series.length > 1, legend: {{ orientation: "h", x: 0, y: -0.16, yanchor: "top", font: {{ size: 11, color: c.text }} }},
       hovermode: "closest", hoverlabel: {{ bgcolor: c.surface, bordercolor: c.grid, font: {{ color: c.text }} }},
     }}, {{ displayModeBar: false, responsive: true }});
   }});

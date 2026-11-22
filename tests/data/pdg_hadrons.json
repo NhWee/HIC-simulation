@@ -1,0 +1,645 @@
+{
+ "source": "2026 Review of Particle Physics, data release 2026-05-30 13:41:24 PDT, API version 2026.0\nF. Takahashi <i>et al.</i> (Particle Data Group), Int. J. Mod. Phys. A 41, 2630011 (2026)\n(C) Particle Data Group (PDG), data released under CC BY 4.0\nFor further information see https://pdg.lbl.gov/api",
+ "states": [
+  {
+   "multiplet": "pi",
+   "charge": 1,
+   "pdg_name": "pi+",
+   "mass": 0.13957039098368132,
+   "width": 2.5283166082854054e-17,
+   "J": "0"
+  },
+  {
+   "multiplet": "pi",
+   "charge": 0,
+   "pdg_name": "pi0",
+   "mass": 0.1349768277676847,
+   "width": 7.811987971364424e-09,
+   "J": "0"
+  },
+  {
+   "multiplet": "K",
+   "charge": 1,
+   "pdg_name": "K+",
+   "mass": 0.4936765994580406,
+   "width": 5.316742691007669e-17,
+   "J": "0"
+  },
+  {
+   "multiplet": "K",
+   "charge": 0,
+   "pdg_name": "K0",
+   "mass": 0.4976107675312575,
+   "width": 0.0,
+   "J": "0"
+  },
+  {
+   "multiplet": "N",
+   "charge": 1,
+   "pdg_name": "p",
+   "mass": 0.9382720894300001,
+   "width": 0.0,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "N",
+   "charge": 0,
+   "pdg_name": "n",
+   "mass": 0.9395654219399999,
+   "width": 7.493617706030893e-28,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "Lambda",
+   "charge": 0,
+   "pdg_name": "Lambda0",
+   "mass": 1.115683138712051,
+   "width": 2.5154321985551412e-15,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "Sigma",
+   "charge": 1,
+   "pdg_name": "Sigma+",
+   "mass": 1.18937004127302,
+   "width": 8.208578450586456e-15,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "Sigma",
+   "charge": 0,
+   "pdg_name": "Sigma0",
+   "mass": 1.1926419323698252,
+   "width": 8.894594594594594e-06,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "Sigma",
+   "charge": -1,
+   "pdg_name": "Sigma-",
+   "mass": 1.197449381521717,
+   "width": 4.45017622988698e-15,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "Xi",
+   "charge": 0,
+   "pdg_name": "Xi0",
+   "mass": 1.314860776450084,
+   "width": 2.266763363451771e-15,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "Xi",
+   "charge": -1,
+   "pdg_name": "Xi-",
+   "mass": 1.32171083818342,
+   "width": 4.015332298802404e-15,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "Omega",
+   "charge": -1,
+   "pdg_name": "Omega-",
+   "mass": 1.6724519528578379,
+   "width": 8.0193460260623e-15,
+   "J": "3/2"
+  },
+  {
+   "multiplet": "eta",
+   "charge": 0,
+   "pdg_name": "eta",
+   "mass": 0.54786187114402,
+   "width": 1.307801461299518e-06,
+   "J": "0"
+  },
+  {
+   "multiplet": "rho",
+   "charge": 0,
+   "pdg_name": "rho(770)0",
+   "mass": 0.7752611563582926,
+   "width": 0.14739133387028722,
+   "J": "1"
+  },
+  {
+   "multiplet": "rho",
+   "charge": 1,
+   "pdg_name": "rho(770)+",
+   "mass": 0.7751078715868065,
+   "width": 0.1491005767546041,
+   "J": "1"
+  },
+  {
+   "multiplet": "omega",
+   "charge": 0,
+   "pdg_name": "omega(782)0",
+   "mass": 0.782655723752181,
+   "width": 0.00868,
+   "J": "1"
+  },
+  {
+   "multiplet": "K*(892)",
+   "charge": 1,
+   "pdg_name": "K^*(892)+",
+   "mass": 0.891882454260085,
+   "width": 0.04846220245736426,
+   "J": "1"
+  },
+  {
+   "multiplet": "K*(892)",
+   "charge": 0,
+   "pdg_name": "K^*(892)0",
+   "mass": 0.8955564491633553,
+   "width": 0.04707456128077299,
+   "J": "1"
+  },
+  {
+   "multiplet": "eta'",
+   "charge": 0,
+   "pdg_name": "eta^'(958)0",
+   "mass": 0.9577837638923,
+   "width": 0.0001880871745486892,
+   "J": "0"
+  },
+  {
+   "multiplet": "f0(980)",
+   "charge": 0,
+   "pdg_name": "f_0(980)0",
+   "mass": 0.99,
+   "width": null,
+   "J": "0"
+  },
+  {
+   "multiplet": "a0(980)",
+   "charge": 0,
+   "pdg_name": "a_0(980)0",
+   "mass": 0.98,
+   "width": null,
+   "J": "0"
+  },
+  {
+   "multiplet": "phi",
+   "charge": 0,
+   "pdg_name": "phi(1020)0",
+   "mass": 1.019459752114901,
+   "width": 0.004248937147226261,
+   "J": "1"
+  },
+  {
+   "multiplet": "h1(1170)",
+   "charge": 0,
+   "pdg_name": "h_1(1170)0",
+   "mass": 1.166,
+   "width": 0.375,
+   "J": "1"
+  },
+  {
+   "multiplet": "b1(1235)",
+   "charge": 0,
+   "pdg_name": "b_1(1235)0",
+   "mass": 1.2294834469801341,
+   "width": 0.14237517073626832,
+   "J": "1"
+  },
+  {
+   "multiplet": "a1(1260)",
+   "charge": 0,
+   "pdg_name": "a_1(1260)0",
+   "mass": 1.23,
+   "width": null,
+   "J": "1"
+  },
+  {
+   "multiplet": "K1(1270)",
+   "charge": 1,
+   "pdg_name": "K_1(1270)+",
+   "mass": 1.275,
+   "width": 0.075,
+   "J": "1"
+  },
+  {
+   "multiplet": "f2(1270)",
+   "charge": 0,
+   "pdg_name": "f_2(1270)0",
+   "mass": 1.2754120499190051,
+   "width": 0.18655435663732642,
+   "J": "2"
+  },
+  {
+   "multiplet": "f1(1285)",
+   "charge": 0,
+   "pdg_name": "f_1(1285)0",
+   "mass": 1.281841436830458,
+   "width": 0.023019403587929328,
+   "J": "1"
+  },
+  {
+   "multiplet": "a2(1320)",
+   "charge": 0,
+   "pdg_name": "a_2(1320)0",
+   "mass": 1.318614626137866,
+   "width": 0.10495290462954959,
+   "J": "2"
+  },
+  {
+   "multiplet": "K1(1400)",
+   "charge": 1,
+   "pdg_name": "K_1(1400)+",
+   "mass": 1.402516791473017,
+   "width": 0.173881487451393,
+   "J": "1"
+  },
+  {
+   "multiplet": "K0*(1430)",
+   "charge": 1,
+   "pdg_name": "K_0^*(1430)+",
+   "mass": 1.425,
+   "width": 0.27,
+   "J": "0"
+  },
+  {
+   "multiplet": "K2*(1430)",
+   "charge": 1,
+   "pdg_name": "K_2^*(1430)+",
+   "mass": 1.4272516106773188,
+   "width": 0.10003612657923451,
+   "J": "2"
+  },
+  {
+   "multiplet": "Delta(1232)",
+   "charge": null,
+   "pdg_name": "Delta(1232)-",
+   "mass": 1.232,
+   "width": 0.117,
+   "J": "3/2"
+  },
+  {
+   "multiplet": "Sigma(1385)",
+   "charge": 1,
+   "pdg_name": "Sigma(1385)+",
+   "mass": 1.382833139288067,
+   "width": 0.036152096233077476,
+   "J": "3/2"
+  },
+  {
+   "multiplet": "Sigma(1385)",
+   "charge": 0,
+   "pdg_name": "Sigma(1385)0",
+   "mass": 1.383814792449643,
+   "width": 0.043584215505889604,
+   "J": "3/2"
+  },
+  {
+   "multiplet": "Sigma(1385)",
+   "charge": -1,
+   "pdg_name": "Sigma(1385)-",
+   "mass": 1.3871830579522721,
+   "width": 0.039445375989613146,
+   "J": "3/2"
+  },
+  {
+   "multiplet": "Lambda(1405)",
+   "charge": null,
+   "pdg_name": "Lambda(1405)0",
+   "mass": 1.4051196412552311,
+   "width": 0.050461538461538454,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "N(1440)",
+   "charge": null,
+   "pdg_name": "N(1440)0",
+   "mass": 1.44,
+   "width": 0.35,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "N(1520)",
+   "charge": null,
+   "pdg_name": "N(1520)0",
+   "mass": 1.515,
+   "width": 0.11,
+   "J": "3/2"
+  },
+  {
+   "multiplet": "Lambda(1520)",
+   "charge": null,
+   "pdg_name": "Lambda(1520)0",
+   "mass": 1.519,
+   "width": 0.016,
+   "J": "3/2"
+  },
+  {
+   "multiplet": "N(1535)",
+   "charge": null,
+   "pdg_name": "N(1535)0",
+   "mass": 1.53,
+   "width": 0.15,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "Xi(1530)",
+   "charge": 0,
+   "pdg_name": "Xi(1530)0",
+   "mass": 1.531800942635904,
+   "width": 0.009137216001047437,
+   "J": "3/2"
+  },
+  {
+   "multiplet": "Xi(1530)",
+   "charge": -1,
+   "pdg_name": "Xi(1530)-",
+   "mass": 1.534972219066874,
+   "width": 0.009921210150217068,
+   "J": "3/2"
+  },
+  {
+   "multiplet": "eta(1295)",
+   "charge": 0,
+   "pdg_name": "eta(1295)0",
+   "mass": 1.293710130391174,
+   "width": 0.05533390262230767,
+   "J": "0"
+  },
+  {
+   "multiplet": "pi(1300)",
+   "charge": 0,
+   "pdg_name": "pi(1300)0",
+   "mass": 1.3,
+   "width": null,
+   "J": "0"
+  },
+  {
+   "multiplet": "f0(1370)",
+   "charge": 0,
+   "pdg_name": "f_0(1370)0",
+   "mass": null,
+   "width": null,
+   "J": "0"
+  },
+  {
+   "multiplet": "eta(1405)",
+   "charge": 0,
+   "pdg_name": "eta(1405)0",
+   "mass": 1.4055001350837,
+   "width": 0.051140542013547556,
+   "J": "0"
+  },
+  {
+   "multiplet": "omega(1420)",
+   "charge": 0,
+   "pdg_name": "omega(1420)0",
+   "mass": 1.41,
+   "width": 0.29,
+   "J": "1"
+  },
+  {
+   "multiplet": "K*(1410)",
+   "charge": 1,
+   "pdg_name": "K^*(1410)+",
+   "mass": 1.413732912723449,
+   "width": 0.2318074398249453,
+   "J": "1"
+  },
+  {
+   "multiplet": "f1(1420)",
+   "charge": 0,
+   "pdg_name": "f_1(1420)0",
+   "mass": 1.427707893252533,
+   "width": 0.05542409570714002,
+   "J": "1"
+  },
+  {
+   "multiplet": "rho(1450)",
+   "charge": 0,
+   "pdg_name": "rho(1450)0",
+   "mass": 1.465,
+   "width": 0.4,
+   "J": "1"
+  },
+  {
+   "multiplet": "f0(1500)",
+   "charge": 0,
+   "pdg_name": "f_0(1500)0",
+   "mass": 1.522,
+   "width": 0.108,
+   "J": "0"
+  },
+  {
+   "multiplet": "f2'(1525)",
+   "charge": 0,
+   "pdg_name": "f_2^'(1525)0",
+   "mass": 1.517975430213962,
+   "width": 0.08158859917075868,
+   "J": "2"
+  },
+  {
+   "multiplet": "omega(1650)",
+   "charge": 0,
+   "pdg_name": "omega(1650)0",
+   "mass": 1.67,
+   "width": 0.15,
+   "J": "1"
+  },
+  {
+   "multiplet": "omega3(1670)",
+   "charge": 0,
+   "pdg_name": "omega_3(1670)0",
+   "mass": 1.667205745233679,
+   "width": 0.1675366799694713,
+   "J": "3"
+  },
+  {
+   "multiplet": "pi2(1670)",
+   "charge": 0,
+   "pdg_name": "pi_2(1670)0",
+   "mass": 1.670628482324409,
+   "width": 0.2575304027398322,
+   "J": "2"
+  },
+  {
+   "multiplet": "rho3(1690)",
+   "charge": 0,
+   "pdg_name": "rho_3(1690)0",
+   "mass": 1.68562279017475,
+   "width": 0.1861857992947022,
+   "J": "3"
+  },
+  {
+   "multiplet": "rho(1700)",
+   "charge": 0,
+   "pdg_name": "rho(1700)0",
+   "mass": 1.72,
+   "width": 0.25,
+   "J": "1"
+  },
+  {
+   "multiplet": "K*(1680)",
+   "charge": 1,
+   "pdg_name": "K^*(1680)+",
+   "mass": 1.717577132197535,
+   "width": 0.3224220011628142,
+   "J": "1"
+  },
+  {
+   "multiplet": "K2(1770)",
+   "charge": 1,
+   "pdg_name": "K_2(1770)+",
+   "mass": 1.7730250783134398,
+   "width": 0.1861326175482688,
+   "J": "2"
+  },
+  {
+   "multiplet": "K3*(1780)",
+   "charge": 1,
+   "pdg_name": "K_3^*(1780)+",
+   "mass": 1.778947997002842,
+   "width": 0.16123179310396302,
+   "J": "3"
+  },
+  {
+   "multiplet": "Delta(1600)",
+   "charge": null,
+   "pdg_name": "Delta(1600)-",
+   "mass": 1.57,
+   "width": 0.25,
+   "J": "3/2"
+  },
+  {
+   "multiplet": "Lambda(1600)",
+   "charge": null,
+   "pdg_name": "Lambda(1600)0",
+   "mass": 1.6,
+   "width": 0.2,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "Delta(1620)",
+   "charge": null,
+   "pdg_name": "Delta(1620)-",
+   "mass": 1.61,
+   "width": 0.13,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "N(1650)",
+   "charge": null,
+   "pdg_name": "N(1650)0",
+   "mass": 1.65,
+   "width": 0.125,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "Sigma(1660)",
+   "charge": null,
+   "pdg_name": "Sigma(1660)-",
+   "mass": 1.66,
+   "width": 0.2,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "Lambda(1670)",
+   "charge": null,
+   "pdg_name": "Lambda(1670)0",
+   "mass": 1.674,
+   "width": 0.03,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "Sigma(1670)",
+   "charge": null,
+   "pdg_name": "Sigma(1670)-",
+   "mass": 1.675,
+   "width": 0.07,
+   "J": "3/2"
+  },
+  {
+   "multiplet": "N(1675)",
+   "charge": null,
+   "pdg_name": "N(1675)0",
+   "mass": 1.675,
+   "width": 0.145,
+   "J": "5/2"
+  },
+  {
+   "multiplet": "N(1680)",
+   "charge": null,
+   "pdg_name": "N(1680)0",
+   "mass": 1.685,
+   "width": 0.12,
+   "J": "5/2"
+  },
+  {
+   "multiplet": "Lambda(1690)",
+   "charge": null,
+   "pdg_name": "Lambda(1690)0",
+   "mass": 1.69,
+   "width": 0.07,
+   "J": "3/2"
+  },
+  {
+   "multiplet": "Xi(1690)",
+   "charge": null,
+   "pdg_name": "Xi(1690)-",
+   "mass": 1.69,
+   "width": 0.02,
+   "J": "?"
+  },
+  {
+   "multiplet": "Delta(1700)",
+   "charge": null,
+   "pdg_name": "Delta(1700)-",
+   "mass": 1.71,
+   "width": 0.3,
+   "J": "3/2"
+  },
+  {
+   "multiplet": "N(1700)",
+   "charge": null,
+   "pdg_name": "N(1700)0",
+   "mass": 1.72,
+   "width": 0.2,
+   "J": "3/2"
+  },
+  {
+   "multiplet": "N(1710)",
+   "charge": null,
+   "pdg_name": "N(1710)0",
+   "mass": 1.71,
+   "width": 0.14,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "N(1720)",
+   "charge": null,
+   "pdg_name": "N(1720)0",
+   "mass": 1.72,
+   "width": 0.25,
+   "J": "3/2"
+  },
+  {
+   "multiplet": "Sigma(1750)",
+   "charge": null,
+   "pdg_name": "Sigma(1750)-",
+   "mass": 1.75,
+   "width": 0.15,
+   "J": "1/2"
+  },
+  {
+   "multiplet": "Sigma(1775)",
+   "charge": null,
+   "pdg_name": "Sigma(1775)-",
+   "mass": 1.775,
+   "width": 0.12,
+   "J": "5/2"
+  },
+  {
+   "multiplet": "Xi(1820)",
+   "charge": null,
+   "pdg_name": "Xi(1820)-",
+   "mass": 1.823,
+   "width": 0.024,
+   "J": "3/2"
+  }
+ ]
+}

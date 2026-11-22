@@ -35,12 +35,12 @@ Indicative values from the reference run (stored with tolerances in
 | Energy-weighted handoff pre-flow | `0.149 c` |
 | QGP-core cells at hydrodynamization | `3594` |
 | Sampled hadrons | `900` |
-| Mean transverse momentum (charged, after decays) | `0.442 GeV` |
-| Mean pT of pi / K / p (charged) | `0.40 / 0.54 / 0.73 GeV` |
-| Reaction-plane `v2` (charged) | `0.015` (single-sample Monte Carlo spread about 0.004) |
+| Mean transverse momentum (charged, after decays) | `0.444 GeV` |
+| Mean pT of pi / K / p (charged) | `0.41 / 0.54 / 0.72 GeV` |
+| Reaction-plane `v2` (charged) | `0.010` (single-sample Monte Carlo spread about 0.004) |
 | Entropy above `Tsw` at `tau0` / through freeze-out | `705 / 688` per unit rapidity |
 | Charged `dN/deta` after resonance decays | `64` |
-| Hadron-resonance-gas / lattice entropy density at `Tsw` | `0.885` |
+| Hadron-resonance-gas / lattice entropy density at `Tsw` | `0.884` |
 
 These values are regression references rather than experimental predictions.
 The reference keeps the uncalibrated `--initial-peak-energy 6`; calibrate it
@@ -233,6 +233,8 @@ the marker is removed together with the fix.
 | `python -m hic.calibrate_normalization --parameter energy-scale --observable dnch_deta --target <dNch/deta>` | Tune the global `--energy-scale` (or `--initial-peak-energy`) to a multiplicity target |
 | `python -m hic.flow_ensemble --energy-scale <K> --events-per-class 10` | Centrality-binned ensemble: dNch/deta, identified mean pT, v2{2}, v3{2}, v2{2}(pT), epsilon_n |
 | `python -m hic.plot_flow_ensemble outputs/flow_ensemble.json [--data measured.csv]` | HTML report of an ensemble, optionally with measurements overlaid |
+| `python tools/fetch_measurements.py` | Refresh `data/measurements/auau200.csv` (PHENIX dNch/deta, STAR v2 and identified mean pT) from HEPData |
+| `python tools/make_pdg_reference.py` | Refresh the PDG reference used by the hadron tests (needs `pip install pdg`) |
 | `.\run_visual_simulation.ps1` | Browser-playable qualitative simulation |
 | `.\run_educational_visual.ps1` | Classroom-style educational board |
 | `.\run_educational_simulator_app.ps1` | Lightweight native educational simulator |

@@ -121,14 +121,14 @@ Landau eigen-equation residual              3.54e-7
 handoff temperature L-infinity error        2.38e-07 GeV (T >= Tsw medium)
 QGP-core cells at hydrodynamization         3594
 freeze-out surface elements                 4667 (93 heating)
-hadrons drawn at the surface               900 (1298 after decays)
-mean pT, charged, after decays              0.4420 GeV
-mean pT of charged pi / K / p                0.403 / 0.538 / 0.732 GeV
-v2 relative to the reaction plane           0.0145
+hadrons drawn at the surface               900 (1315 after decays)
+mean pT, charged, after decays              0.4438 GeV
+mean pT of charged pi / K / p                0.405 / 0.542 / 0.722 GeV
+v2 relative to the reaction plane           0.0105
 entropy above Tsw at tau0 (per unit eta)    704.7
 entropy flux / initial entropy              0.976
-charged dN/deta after resonance decays      64.3
-HRG / lattice entropy density at Tsw        0.885
+charged dN/deta after resonance decays      64.0
+HRG / lattice entropy density at Tsw        0.884
 ```
 
 The integer Glauber geometry should be stable for the fixed NumPy seed. Small
