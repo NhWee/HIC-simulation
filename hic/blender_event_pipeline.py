@@ -17,6 +17,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from hic.eos import EquationOfState, read_eos_table
+from hic import viscous_hydro
 from hic.hadrons import CLASS_NAMES, decay_all, hadron_table, hrg_thermodynamics, number_densities
 from hic.glauber_ensemble import eccentricity_n
 from hic.ideal_hydro_2d import (
@@ -92,6 +93,10 @@ class SurfaceResult:
     d_sigma_x: np.ndarray
     d_sigma_y: np.ndarray
     heating: np.ndarray
+    shear_xx: np.ndarray | None = None  # pi^xx, pi^xy, pi^yy and Pi on the surface (viscous runs)
+    shear_xy: np.ndarray | None = None
+    shear_yy: np.ndarray | None = None
+    bulk: np.ndarray | None = None
 
 
 @dataclass
@@ -569,6 +574,7 @@ def isotherm_cubes(
     dx: float,
     previous_velocity: tuple[torch.Tensor, torch.Tensor],
     velocity: tuple[torch.Tensor, torch.Tensor],
+    extra_fields: dict[str, tuple[torch.Tensor, torch.Tensor]] | None = None,
 ) -> dict[str, torch.Tensor]:
     """Isotherm surface elements of the (tau, x, y) cubes between two time steps.
 
@@ -603,6 +609,7 @@ def isotherm_cubes(
 
     vx = corners_of(previous_velocity[0], velocity[0])
     vy = corners_of(previous_velocity[1], velocity[1])
+    extras = {name: corners_of(before, after) for name, (before, after) in (extra_fields or {}).items()}
     cube = temps.view(-1, 2, 2, 2)  # (M, t, y, x)
     tau_next = previous_tau + dt
     tau_mid = previous_tau + 0.5 * dt
@@ -621,7 +628,8 @@ def isotherm_cubes(
     d_sigma_y = -(frac_y_high - frac_y_low) * tau_mid * dt * dx
 
     # Edge crossings: linear interpolation of position, time and velocity where T = threshold.
-    sums = {key: torch.zeros(rows.numel(), dtype=temps.dtype, device=temps.device) for key in ("t", "y", "x", "vx", "vy", "n")}
+    sums = {key: torch.zeros(rows.numel(), dtype=temps.dtype, device=temps.device)
+            for key in ("t", "y", "x", "vx", "vy", "n", *extras)}
     for a, b in _CUBE_EDGES:
         ta, tb = temps[:, a], temps[:, b]
         crosses = (ta >= threshold) != (tb >= threshold)
@@ -631,6 +639,8 @@ def isotherm_cubes(
             sums[key] += crosses * (_CUBE_CORNERS[a][axis] + f * (_CUBE_CORNERS[b][axis] - _CUBE_CORNERS[a][axis]))
         sums["vx"] += crosses * (vx[:, a] + f * (vx[:, b] - vx[:, a]))
         sums["vy"] += crosses * (vy[:, a] + f * (vy[:, b] - vy[:, a]))
+        for name, corners in extras.items():
+            sums[name] += crosses * (corners[:, a] + f * (corners[:, b] - corners[:, a]))
         sums["n"] += crosses
     count = torch.clamp(sums["n"], min=1.0)
     return {
@@ -645,7 +655,17 @@ def isotherm_cubes(
         "d_sigma_x": d_sigma_x,
         "d_sigma_y": d_sigma_y,
         "heating": d_sigma_tau < 0.0,
+        **{name: sums[name] / count for name in extras},
     }
+
+
+def viscous_parameters(args: argparse.Namespace) -> viscous_hydro.ViscousParameters:
+    return viscous_hydro.ViscousParameters(
+        eta_over_s=getattr(args, "eta_over_s", 0.0),
+        zeta_over_s_max=getattr(args, "zeta_over_s_max", 0.0),
+        zeta_peak_temperature=getattr(args, "zeta_peak_temperature", 0.165),
+        zeta_width=getattr(args, "zeta_width", 0.03),
+    )
 
 
 def evolve_hydrodynamics(
@@ -656,12 +676,24 @@ def evolve_hydrodynamics(
     yy: torch.Tensor,
     dx: float,
 ) -> HydroResult:
-    state = conserved_from_primitive(
-        torch.clamp(preequilibrium.final_energy_density, min=args.energy_floor),
-        preequilibrium.final_velocity_x,
-        preequilibrium.final_velocity_y,
-        eos,
-    )
+    params = viscous_parameters(args)
+    temperature_of = lambda energy: physical_temperature(eos, energy)  # noqa: E731
+    viscous_state = None
+    if params.active:
+        viscous_state = viscous_hydro.initial_state(
+            torch.clamp(preequilibrium.final_energy_density, min=args.energy_floor),
+            preequilibrium.final_velocity_x,
+            preequilibrium.final_velocity_y,
+            eos, params, temperature_of, args.tau0, dx, initial_shear=args.initial_shear,
+        )
+        state = viscous_state.conserved
+    else:
+        state = conserved_from_primitive(
+            torch.clamp(preequilibrium.final_energy_density, min=args.energy_floor),
+            preequilibrium.final_velocity_x,
+            preequilibrium.final_velocity_y,
+            eos,
+        )
     base_dt = args.cfl * dx
     tau = args.tau0
     next_snapshot_tau = tau
@@ -671,9 +703,15 @@ def evolve_hydrodynamics(
     freezeout_velocity_y = torch.zeros_like(preequilibrium.final_energy_density)
     freezeout_energy = torch.zeros_like(preequilibrium.final_energy_density)
 
-    previous_energy, _, previous_vx, previous_vy = primitive_from_conserved(
-        state[0], state[1], state[2], eos, args.energy_floor
-    )
+    if viscous_state is not None:
+        previous_energy = viscous_state.primitive["e"]
+        previous_vx, previous_vy = viscous_state.primitive["vx"], viscous_state.primitive["vy"]
+        previous_stress = (*viscous_state.shear, viscous_state.bulk)
+    else:
+        previous_energy, _, previous_vx, previous_vy = primitive_from_conserved(
+            state[0], state[1], state[2], eos, args.energy_floor
+        )
+        previous_stress = None
     previous_temperature = physical_temperature(eos, previous_energy)
     element_chunks: list[dict[str, torch.Tensor]] = []
 
@@ -714,13 +752,22 @@ def evolve_hydrodynamics(
     while tau < args.tau_max:
         dt = min(base_dt, args.tau_max - tau)
         previous_tau = tau
-        state = hydro_step(state, tau, dt, dx, eos, args.energy_floor, solver=args.solver)
+        if viscous_state is not None:
+            viscous_state = viscous_hydro.viscous_step(
+                viscous_state, tau, dt, dx, eos, params, temperature_of, args.energy_floor
+            )
+            state = viscous_state.conserved
+            prim = viscous_hydro.recover_primitive(viscous_state, eos, args.energy_floor)
+            energy_density, velocity_x, velocity_y = prim["e"], prim["vx"], prim["vy"]
+            stress = (*viscous_state.shear, viscous_state.bulk)
+        else:
+            state = hydro_step(state, tau, dt, dx, eos, args.energy_floor, solver=args.solver)
+            energy_density, _, velocity_x, velocity_y = primitive_from_conserved(
+                state[0], state[1], state[2], eos, args.energy_floor
+            )
+            stress = None
         tau += dt
         steps += 1
-
-        energy_density, _, velocity_x, velocity_y = primitive_from_conserved(
-            state[0], state[1], state[2], eos, args.energy_floor
-        )
         temperature = physical_temperature(eos, energy_density)
 
         chunk = isotherm_cubes(
@@ -732,6 +779,11 @@ def evolve_hydrodynamics(
             dx,
             (previous_vx, previous_vy),
             (velocity_x, velocity_y),
+            extra_fields=(
+                {name: (before, after) for name, before, after in
+                 zip(("shear_xx", "shear_xy", "shear_yy", "bulk"), previous_stress, stress)}
+                if stress is not None else None
+            ),
         )
         if chunk:
             element_chunks.append(chunk)
@@ -768,6 +820,7 @@ def evolve_hydrodynamics(
         previous_temperature = temperature
         previous_vx = velocity_x
         previous_vy = velocity_y
+        previous_stress = stress
 
         if tau > args.tau0 + 0.5 and float(torch.max(temperature).detach().cpu()) < args.freezeout_temperature:
             append_snapshot(tau, energy_density, velocity_x, velocity_y, temperature)
@@ -780,7 +833,7 @@ def evolve_hydrodynamics(
     element_keys = (
         "row", "column", "x_offset", "y_offset", "tau", "velocity_x", "velocity_y",
         "d_sigma_tau", "d_sigma_x", "d_sigma_y", "heating",
-    )
+    ) + (("shear_xx", "shear_xy", "shear_yy", "bulk") if params.active else ())
     surface_elements = {
         key: (
             torch.cat([chunk[key] for chunk in element_chunks]).detach().cpu().numpy()
@@ -826,6 +879,7 @@ def build_freezeout_surface(hydro: HydroResult, axis: np.ndarray, dx: float) -> 
         d_sigma_x=elements["d_sigma_x"].astype(np.float32),
         d_sigma_y=elements["d_sigma_y"].astype(np.float32),
         heating=elements["heating"].astype(bool),
+        **{name: elements[name].astype(np.float64) for name in ("shear_xx", "shear_xy", "shear_yy", "bulk") if name in elements},
     )
 
 
@@ -947,6 +1001,42 @@ def flow_pair_sums(
     return out
 
 
+def shear_delta_f_factor(
+    args: argparse.Namespace,
+    surface: SurfaceResult,
+    cell: np.ndarray,
+    eta_s: np.ndarray,
+    lab_energy: np.ndarray,
+    lab_momentum: np.ndarray,
+) -> np.ndarray:
+    """1 + delta f_shear / f_0 = 1 + p^mu p^nu pi_mu_nu / (2 T^2 (e + p)) (Grad 14-moment, Boltzmann), clipped >= 0.
+
+    Evaluated in the frame boosted by eta_s along z (where the element's fluid has no longitudinal
+    velocity): p'^0 = cosh(eta_s) E - sinh(eta_s) p_z, p'^z = cosh(eta_s) p_z - sinh(eta_s) E. pi^{tau mu}
+    follows from orthogonality and pi^zz = tau^2 pi^etaeta from tracelessness.
+    """
+    from hic.lattice_eos import thermodynamics
+
+    temperature = args.freezeout_temperature
+    thermo = thermodynamics(temperature)
+    enthalpy = thermo["energy_density"] + thermo["pressure"]  # GeV/fm^3
+    vx, vy = surface.velocity_x[cell].astype(np.float64), surface.velocity_y[cell].astype(np.float64)
+    pxx, pxy, pyy = surface.shear_xx[cell], surface.shear_xy[cell], surface.shear_yy[cell]
+    ptx = vx * pxx + vy * pxy
+    pty = vx * pxy + vy * pyy
+    ptt = vx * ptx + vy * pty
+    pzz = ptt - pxx - pyy
+    cosh, sinh = np.cosh(eta_s), np.sinh(eta_s)
+    pz_lab, px, py = lab_momentum[:, 0], lab_momentum[:, 1], lab_momentum[:, 2]
+    p0 = cosh * lab_energy - sinh * pz_lab
+    pz = cosh * pz_lab - sinh * lab_energy
+    contraction = (
+        ptt * p0 * p0 - 2.0 * p0 * (ptx * px + pty * py)
+        + pxx * px * px + 2.0 * pxy * px * py + pyy * py * py + pzz * pz * pz
+    )
+    return np.clip(1.0 + contraction / (2.0 * temperature**2 * enthalpy), 0.0, None)
+
+
 def sample_cooper_frye_particles(
     args: argparse.Namespace,
     surface: SurfaceResult,
@@ -1014,6 +1104,8 @@ def sample_cooper_frye_particles(
         + lab_momentum[:, 2] * surface.d_sigma_y[cell]
     )
     importance = np.maximum(p_dot_sigma, 0.0) / (rest_energy * envelope[cell])
+    if surface.shear_xx is not None:
+        importance = importance * shear_delta_f_factor(args, surface, cell, eta_s, lab_energy, lab_momentum)
     if float(importance.sum()) <= 0.0:
         raise RuntimeError("The Cooper-Frye surface produced no positive contributions.")
 
@@ -1214,7 +1306,13 @@ def physics_audit(
             and float(np.max(hydro.max_velocity)) < 1.0
             and surface.tau.size >= 100
             and (args.particles <= 0 or particles.primaries == args.particles)
-            and abs(entropy_ratio - 1.0) < 0.05
+            # Ideal fluid: entropy is conserved, so the isotherm must carry it all (to 5%). Viscous fluid:
+            # entropy is produced, so the flux may exceed the initial entropy (bounded loosely).
+            and (
+                abs(entropy_ratio - 1.0) < 0.05
+                if not viscous_parameters(args).active
+                else 0.97 < entropy_ratio < 1.5
+            )
             and float(np.min(particles.cooper_frye_weight)) >= 0.0
             # Converging transverse flow (e.g. a cold hole between hot spots filling in) can compress and
             # reheat the fluid, so the hottest cell need not cool monotonically. What ideal hydro with
@@ -1261,6 +1359,8 @@ def physics_audit(
         "entropy_at_tau0_above_tsw": initial_entropy,
         "entropy_flux_through_freezeout": surface_entropy,
         "entropy_flux_ratio": entropy_ratio,
+        "eta_over_s": viscous_parameters(args).eta_over_s,
+        "zeta_over_s_max": viscous_parameters(args).zeta_over_s_max,
         "dn_dy_pion": float(particles.dn_dy[0]),
         "dn_dy_kaon": float(particles.dn_dy[1]),
         "dn_dy_baryon": float(particles.dn_dy[2]),
@@ -1423,6 +1523,17 @@ def build_parser() -> argparse.ArgumentParser:
         "from the Cooper-Frye multiplicity in |eta_s| < eta-window.",
     )
     parser.add_argument("--no-decays", action="store_true", help="Keep resonances undecayed (diagnostics).")
+    parser.add_argument("--eta-over-s", type=float, default=0.0, help="Shear viscosity to entropy ratio (0: ideal fluid).")
+    parser.add_argument(
+        "--zeta-over-s-max", type=float, default=0.0,
+        help="Peak of the bulk viscosity to entropy ratio, a Lorentzian in T (0: no bulk viscosity).",
+    )
+    parser.add_argument("--zeta-peak-temperature", type=float, default=0.165, help="GeV")
+    parser.add_argument("--zeta-width", type=float, default=0.03, help="GeV")
+    parser.add_argument(
+        "--initial-shear", choices=("ns", "zero"), default="ns",
+        help="Viscous stresses at tau0: Navier-Stokes values from the initial flow, or zero.",
+    )
     parser.add_argument(
         "--candidate-pool",
         type=int,

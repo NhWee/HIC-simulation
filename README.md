@@ -79,8 +79,16 @@ particlization contour. The pre-equilibrium color field uses a Landau-frame
 effective temperature as a diagnostic; it is not a claim of local thermal
 equilibrium before hydrodynamization.
 
+Second-order (MIS/14-moment) shear and bulk viscous hydrodynamics is available
+as an opt-in (`--eta-over-s`, `--zeta-over-s-max`; default 0 = ideal fluid,
+`hic/viscous_hydro.py`) with the Grad shear delta-f in Cooper-Frye. It is validated
+against the Bjorken MIS ODE, exact linearized shear/sound waves and the
+Israel-Stewart Gubser flow (`tests/test_viscous.py`), but its effect on v2 in full
+events is still under investigation (see `docs/ROADMAP.md`), and bulk viscosity
+is unstable for (zeta/s)_max >~ 0.1.
+
 This is a physically constrained prototype, not a precision event generator.
-It does not include second-order viscous hydrodynamics, a full 3+1D kinetic
+It does not include a full 3+1D kinetic
 pre-equilibrium solver, jet-medium interactions, hadronic rescattering (a
 SMASH/UrQMD afterburner), resonance spectral widths, or quantum statistics.
 
