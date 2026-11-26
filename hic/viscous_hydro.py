@@ -41,6 +41,9 @@ class ViscousParameters:
     shear_relaxation: float = 5.0  # c_pi in tau_pi = c_pi eta / (e + p)
     regulator: float = 1.0  # cap sqrt(pi.pi + 3 Pi^2) <= regulator * (e + p)
     bjorken: bool = True  # include the Milne (longitudinal expansion) terms
+    # delta_pipi / tau_pi in the -delta_pipi pi theta term (4/3: DNMR / conformal "full" IS;
+    # 0: the simplified IS form of Song & Heinz, PRC 77, 064901 (2008), Eq. 5).
+    shear_theta_coefficient: float = 4.0 / 3.0
 
     @property
     def active(self) -> bool:
@@ -274,7 +277,7 @@ def _relax(state: ViscousState, params: ViscousParameters, eos: EquationOfState,
         target = 2.0 * eta * sigma
         decay = torch.exp(-step / torch.clamp(tau_pi, min=1.0e-12))
         relaxed = target + (state.shear - target) * decay
-        state.shear = relaxed * torch.exp(-(4.0 / 3.0) * theta * step)
+        state.shear = relaxed * torch.exp(-params.shear_theta_coefficient * theta * step)
         state.shear = state.shear + step * projector_terms(state.shear, prim, acceleration)
     else:
         state.shear = torch.zeros_like(state.shear)
