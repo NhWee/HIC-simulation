@@ -83,9 +83,10 @@ Second-order (MIS/14-moment) shear and bulk viscous hydrodynamics is available
 as an opt-in (`--eta-over-s`, `--zeta-over-s-max`; default 0 = ideal fluid,
 `hic/viscous_hydro.py`) with the Grad shear delta-f in Cooper-Frye. It is validated
 against the Bjorken MIS ODE, exact linearized shear/sound waves and the
-Israel-Stewart Gubser flow (`tests/test_viscous.py`), but its effect on v2 in full
-events is still under investigation (see `docs/ROADMAP.md`), and bulk viscosity
-is unstable for (zeta/s)_max >~ 0.1.
+Israel-Stewart Gubser flow and the Song-Heinz Cu+Cu benchmark
+(`tests/test_viscous.py`, `tools/song_heinz_cucu.py`). In fluctuating Au+Au events
+eta/s = 0.08-0.16 changes the final v2 by less than 10% (see `docs/ROADMAP.md` for
+the breakdown), and bulk viscosity is unstable for (zeta/s)_max >~ 0.1.
 
 This is a physically constrained prototype, not a precision event generator.
 It does not include a full 3+1D kinetic

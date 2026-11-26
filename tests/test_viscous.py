@@ -237,3 +237,27 @@ def test_viscous_event_produces_entropy_and_passes_audit():
     assert 1.03 < viscous["entropy_flux_ratio"] < 1.5  # shear viscosity produces entropy
     assert viscous["dnch_deta"] > ideal["dnch_deta"]
     assert viscous["eta_over_s"] == 0.12
+
+
+def test_reproduces_song_heinz_cucu_viscous_suppression():
+    """Song & Heinz, PRC 77, 064901 (2008), Cu+Cu b = 7 fm, EOS I, eta/s = 0.08, tau_pi = 3 eta/sT, their Eq. (5):
+    the flow anisotropy <|v_x| - |v_y|> ends 20-25% and the total momentum anisotropy eps'_p 40-50% below ideal."""
+    from tools import song_heinz_cucu as sh
+
+    axis = np.linspace(-10.0, 10.0, 81)
+    dx = float(axis[1] - axis[0])
+    xg, yg = np.meshgrid(axis, axis)
+    scale = 30.0 / float(sh.wounded_nucleons(np.zeros(1), np.zeros(1), 0.0)[0])
+    energy = torch.as_tensor(scale * sh.wounded_nucleons(xg, yg, 7.0) + 1.0e-12)
+    xx, yy = torch.as_tensor(xg), torch.as_tensor(yg)
+    results = {}
+    for case in ("ideal", "song-heinz"):
+        eta_over_s, c_pi, theta_coefficient, initial = sh.CASES[case]
+        params = vh.ViscousParameters(eta_over_s=eta_over_s, shear_relaxation=c_pi, shear_theta_coefficient=theta_coefficient)
+        rows = sh.run(case, params, energy, xx, yy, dx, 0.6, 3.6, 0.25, 0.130, 3.0, initial)
+        results[case] = rows[-1]
+        assert rows[-1]["tau_minus_tau0"] == pytest.approx(3.0)
+    flow = results["song-heinz"]["flow_anisotropy"] / results["ideal"]["flow_anisotropy"] - 1.0
+    total = results["song-heinz"]["eps_p_total"] / results["ideal"]["eps_p_total"] - 1.0
+    assert -0.27 < flow < -0.17, flow
+    assert -0.55 < total < -0.38, total
